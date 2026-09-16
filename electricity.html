@@ -65,6 +65,21 @@ td:first-child{
 .proof-cell{
   text-align:center;
 }
+
+.save-status{
+  display:inline-flex;
+  align-items:center;
+  min-height:20px;
+  padding:4px 9px;
+  border-bottom:1px solid #8B5CF6;
+  color:#fff;
+  font-size:14px;
+  font-weight:600;
+  opacity:0;
+  transition:opacity .15s ease;
+}
+.save-status.visible{opacity:1}
+.save-status.error{color:#fecaca;border-bottom-color:#ef4444}
  
 @media(max-width:768px){
  .controls,.actions{flex-direction:column}
@@ -99,6 +114,10 @@ td:first-child{
 
 </div>
 
+<div style="margin-top:8px;min-height:28px;">
+  <span id="saveStatus" class="save-status" role="status" aria-live="polite"></span>
+</div>
+
 <div class="card">
 <h2>Electricity Tracker</h2>
 <table>
@@ -118,6 +137,31 @@ td:first-child{
 <script>
 const KEY='tenant_tracker_v5';
 let db={months:{}};
+let saveStatusTimer = null;
+
+function setSaveStatus(text, state='normal'){
+  const el = document.getElementById('saveStatus');
+  if(!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('visible', Boolean(text));
+  el.classList.toggle('error', state === 'error');
+}
+
+function showSaving(){
+  clearTimeout(saveStatusTimer);
+  setSaveStatus('Saving...');
+}
+
+function showSaved(){
+  clearTimeout(saveStatusTimer);
+  setSaveStatus('✓ Saved');
+  saveStatusTimer = setTimeout(() => setSaveStatus(''), 2500);
+}
+
+function showSaveError(){
+  clearTimeout(saveStatusTimer);
+  setSaveStatus('⚠ Save failed', 'error');
+}
 
 function saveCurrentMonth(){
  localStorage.setItem(
@@ -178,6 +222,7 @@ function currentMonth(){return monthSelect.value;}
 
   if(error){
     console.error(error);
+    showSaveError();
   }
 }
 
@@ -463,6 +508,7 @@ async function performSelectiveTenantCopy(){
 }
 async function saveMonth(){
 
+ showSaving();
  const month = currentMonth();
 
  const { error: deleteError } =
@@ -473,8 +519,9 @@ async function saveMonth(){
 
  if(deleteError){
    console.error(deleteError);
+   showSaveError();
    alert(deleteError.message);
-   return;
+   return false;
  }
 
 const rows = [...tenantBody.rows].map((r,index) => ({
@@ -498,15 +545,19 @@ const rows = [...tenantBody.rows].map((r,index) => ({
 
    if(error){
      console.error(error);
+     showSaveError();
      alert(error.message);
-     return;
+     return false;
    }
  }
 
 await loadDB();
 
 console.log("DB after save:", db);
-console.log("Saved to Supabase");}
+console.log("Saved to Supabase");
+showSaved();
+return true;
+}
 
 
 async function loadMonth(){
