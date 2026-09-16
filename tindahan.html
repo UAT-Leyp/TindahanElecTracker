@@ -68,7 +68,7 @@ console.log("Supabase Connected", db);
 
 <div class="container">
 <div style="background:#d1ecff;border:1px solid #74c0fc;padding:10px;border-radius:10px;margin-bottom:15px;">
-☁️ Tindahan ni Sonny Boy at Luisa
+☁️ Tindahan ni Sonny Boy
 </div>
 
 <h1 style="background:linear-gradient(135deg,#4dabf7,#228be6);color:white;padding:18px;border-radius:14px;margin-top:0;">🏪 Tindahan Tracker and Pricing</h1>
@@ -160,8 +160,18 @@ console.log("Supabase Connected", db);
 <tbody id="cartBody"></tbody>
 </table>
 <p><strong>Cart Total: ₱<span id="cartTotal">0.00</span></strong></p>
-<input id="cashReceived" type="number" placeholder="Cash Received" oninput="renderCart()">
-<p><strong>Change: ₱<span id="changeAmount">0.00</span></strong></p>
+
+<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-top:10px;">
+<select id="paymentMethod" onchange="updatePaymentMethodUI()">
+<option value="Cash">Cash</option>
+<option value="Utang">Utang</option>
+</select>
+
+<input id="cashReceived" type="number" min="0" step="0.01" placeholder="Cash Received" oninput="renderCart()">
+<input id="utangCustomerName" type="text" placeholder="Customer Name for Utang" style="display:none;grid-column:2;">
+</div>
+
+<p id="changeRow"><strong>Change: ₱<span id="changeAmount">0.00</span></strong></p>
 <button class="sell-btn" onclick="checkoutCart()">Checkout Sale</button>
 </div><h3>💳 Customer Ledger (Utang)</h3>
 
@@ -753,6 +763,20 @@ cart.push({index:Number(i),product:item.product,price:item.price,qty:q});
 renderCart();
 }
 
+function updatePaymentMethodUI(){
+const method=document.getElementById('paymentMethod')?.value||'Cash';
+const cashInput=document.getElementById('cashReceived');
+const utangInput=document.getElementById('utangCustomerName');
+const changeRow=document.getElementById('changeRow');
+
+const isUtang=method==='Utang';
+if(cashInput) cashInput.style.display=isUtang?'none':'';
+if(utangInput) utangInput.style.display=isUtang?'':'none';
+if(changeRow) changeRow.style.display=isUtang?'none':'';
+
+renderCart();
+}
+
 function renderCart(){
 const body=document.getElementById('cartBody');
 if(!body)return;
@@ -764,25 +788,116 @@ total+=t;
 body.innerHTML+=`<tr><td>${c.product}</td><td>${c.qty}</td><td>₱${c.price}</td><td>₱${t.toFixed(2)}</td></tr>`;
 });
 document.getElementById('cartTotal').innerText=total.toFixed(2);
+
+const method=document.getElementById('paymentMethod')?.value||'Cash';
 const cash=Number(document.getElementById('cashReceived')?.value||0);
-document.getElementById('changeAmount').innerText=(cash-total).toFixed(2);
+const change=document.getElementById('changeAmount');
+if(change){
+change.innerText=method==='Cash'?(cash-total).toFixed(2):'0.00';
+}
 }
 
-function checkoutCart(){
+async function checkoutCart(){
 if(cart.length===0)return alert('Cart is empty');
+
 let total=0;
 for(const c of cart){
 const item=inventory[c.index];
-if(!item||item.stock<c.qty){alert('Not enough stock for '+c.product);return;}
-item.stock-=c.qty;
+if(!item||item.stock<c.qty){
+alert('Not enough stock for '+c.product);
+return;
+}
 total+=c.price*c.qty;
 }
+
+const method=document.getElementById('paymentMethod')?.value||'Cash';
+let customerName='';
+
+if(method==='Cash'){
+const cash=Number(document.getElementById('cashReceived')?.value||0);
+if(cash<total){
+alert('Cash received is less than the cart total.');
+return;
+}
+}else{
+customerName=document.getElementById('utangCustomerName')?.value.trim()||'';
+if(!customerName){
+alert('Enter the customer name for Utang.');
+return;
+}
+
+showSaving();
+
+const existing=ledger.find(x =>
+String(x.customer_name||'').trim().toLowerCase()===customerName.toLowerCase()
+);
+
+if(existing){
+const { error }=await db
+.from('pos_ledger')
+.update({
+outstanding_balance:Number(existing.outstanding_balance||0)+total,
+updated_at:new Date().toISOString()
+})
+.eq('id',existing.id);
+
+if(error){
+console.error(error);
+showSaveError();
+alert(error.message);
+return;
+}
+}else{
+const { error }=await db
+.from('pos_ledger')
+.insert([{
+customer_name:customerName,
+outstanding_balance:total
+}]);
+
+if(error){
+console.error(error);
+showSaveError();
+alert(error.message);
+return;
+}
+}
+
+await addDebtHistory(
+customerName,
+'Debt Added',
+total,
+'POS checkout'
+);
+
+await loadLedger();
+}
+
+for(const c of cart){
+const item=inventory[c.index];
+item.stock-=c.qty;
+}
+
 profits[today]+=total;
 dailyProfit.innerText=profits[today].toFixed(2);
-addHistory('Checkout Sale Total ₱'+total.toFixed(2));
+
+if(method==='Cash'){
+await addHistory('Checkout Sale - Cash - Total ₱'+total.toFixed(2));
+}else{
+await addHistory(
+'Checkout Sale - Utang - '+customerName+' - Total ₱'+total.toFixed(2)
+);
+}
+
 cart=[];
+const cashInput=document.getElementById('cashReceived');
+const utangInput=document.getElementById('utangCustomerName');
+if(cashInput) cashInput.value='';
+if(utangInput) utangInput.value='';
+
 renderCart();
 renderInventory();
+showSaved();
 }
 
 
