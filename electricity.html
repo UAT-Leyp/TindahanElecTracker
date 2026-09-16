@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARAGON Tenant Electricity Tracker</title>
+<style>
+body{margin:0;background:#071F44;color:#fff;font-family:Arial,sans-serif;padding:15px}
+h1{color:#c4b5fd}
+.card{background:#2A144A;border:1px solid #8B5CF6;border-radius:16px;padding:15px;margin-top:15px}
+.controls,.actions{display:flex;gap:10px;flex-wrap:wrap}
+button{background:#8B5CF6;color:#fff;border:none;padding:10px 14px;border-radius:10px;cursor:pointer}
+input,select{width:100%;box-sizing:border-box;padding:8px;border:none;border-radius:8px;background:#12091F;color:#fff}
+table{
+  width:100%;
+  border-collapse:collapse;
+  table-layout:fixed;
+}
+ th:nth-child(1), td:nth-child(1){ width:20%; } /* Tenant */
+th:nth-child(2), td:nth-child(2){ width:8%; }  /* Previous */
+th:nth-child(3), td:nth-child(3){ width:8%; }  /* Current */
+th:nth-child(4), td:nth-child(4){ width:6%; }  /* Consumed */
+th:nth-child(5), td:nth-child(5){ width:10%; } /* Price */
+th:nth-child(6), td:nth-child(6){ width:8%; }  /* Total */
+th:nth-child(7), td:nth-child(7){ width:10%; } /* Status */
+th:nth-child(8), td:nth-child(8){ width:15%; } /* Proof */
+th:nth-child(9), td:nth-child(9){ width:7%; }  /* Delete */
+th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,.15)}
+th{background:#321a57}
+.paid{background:#16a34a}.unpaid{background:#dc2626}
+.summary{display:flex;gap:10px;flex-wrap:wrap}
+
+ .box{
+  background:#223b63;
+  padding:12px;
+  border-radius:10px;
+  min-width:180px;
+}
+.kwh-input{
+  width:80px;
+  margin:auto;
+  display:block;
+}
+
+.price{
+  width:100px;
+  margin:auto;
+  display:block;
+}
+
+th{
+  background:#321a57;
+  text-align:center;
+}
+
+td{
+  text-align:center;
+}
+
+td:first-child{
+  text-align:left;
+}
+
+
+.proof-cell{
+  text-align:center;
+}
+ 
+@media(max-width:768px){
+ .controls,.actions{flex-direction:column}
+ table{font-size:12px}
+}
+</style>
+</head>
+<body>
+<a href="/" aria-label="Back to app selection" style="position:fixed;top:12px;right:12px;z-index:9999;background:#8B5CF6;color:#fff;text-decoration:none;padding:9px 12px;border-radius:10px;font:600 14px Arial,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25)">← Home</a>
+
+<h1>ARAGON Tenant Electricity Tracker</h1>
+
+<div class="controls">
+<button onclick="prevMonth()">◀ Prev</button>
+<select id="monthSelect"></select>
+<button onclick="nextMonth()">Next ▶</button>
+</div>
+
+<div class="actions" style="margin-top:10px">
+<button onclick="addTenant()">Add Tenant</button>
+<button onclick="saveMonth()">Save Data</button>
+<button onclick="exportBackup()">Export Backup</button>
+
+<input
+  type="text"
+  id="tenantSearch"
+  placeholder="Search tenant..."
+  oninput="filterTenants()"
+  style="max-width:250px"
+>
+
+</div>
+
+<div class="card">
+<h2>Electricity Tracker</h2>
+<table>
+<thead>
+<tr>
+<th>Tenant</th><th>Previous kWh</th><th>Current kWh</th><th>Consumed</th>
+<th>Price/kWh</th><th>Total Bill</th><th>Status</th><th>Proof/Notes</th><th>Action</th>
+</tr>
+</thead>
+<tbody id="tenantBody"></tbody>
+</table>
+</div>
+
+
+
+
+<script>
+const KEY='tenant_tracker_v5';
+let db={months:{}};
+
+function saveCurrentMonth(){
+ localStorage.setItem(
+   'last_selected_month',
+   monthSelect.value
+ );
+}
+ 
+function months(){
+ let arr=[];
+
+ // March 2026
+ let d = new Date(2026,2,1);
+
+ // December 2030
+ let e = new Date(2030,11,1);
+
+ while(d<=e){
+   arr.push(
+     d.toLocaleString(
+       'en-US',
+       {month:'long',year:'numeric'}
+     )
+   );
+   d.setMonth(d.getMonth()+1);
+ }
+
+ return arr;
+}
+function initMonths(){
+
+ const monthList = months();
+
+ monthList.forEach(
+   m => monthSelect.add(new Option(m,m))
+ );
+
+monthSelect.onchange = async () => {
+
+   await saveMonth();
+
+   await loadMonth();
+
+   await saveCurrentMonthToSupabase();
+};
+}
+
+function currentMonth(){return monthSelect.value;}
+ async function saveCurrentMonthToSupabase(){
+
+  const { error } =
+  await supabaseClient
+    .from('elec_app_settings')
+    .upsert({
+      setting_key:'current_month',
+      setting_value:monthSelect.value
+    });
+
+  if(error){
+    console.error(error);
+  }
+}
+
+async function loadCurrentMonthFromSupabase(){
+
+  const { data, error } =
+  await supabaseClient
+    .from('elec_app_settings')
+    .select('setting_value')
+    .eq('setting_key','current_month')
+    .single();
+
+  if(error){
+    console.error(error);
+    return null;
+  }
+
+  return data.setting_value;
+}
+function prevLabel(m){let list=months(),i=list.indexOf(m);return i>0?list[i-1]:null;}
+
+function ensureMonth(m){
+ if(db.months[m]) return;
+
+ let p = prevLabel(m);
+
+ if(p && db.months[p]){
+   console.log("Creating month:", m);
+
+   db.months[m] = {
+     tenants: db.months[p].tenants.map(t => ({
+       id: t.id,
+       name: t.name,
+       previous: t.current || 0,
+       current: '',
+       price: t.price ?? '',
+       status: 'Unpaid',
+        proof_url: ''
+     }))
+   };
+ } else {
+   db.months[m] = {
+     tenants: []
+   };
+ }
+
+ saveDB();
+}
+async function saveMonth(){
+
+ const month = currentMonth();
+
+ const { error: deleteError } =
+ await supabaseClient
+   .from('elec_tenant_bills')
+   .delete()
+   .eq('month', month);
+
+ if(deleteError){
+   console.error(deleteError);
+   alert(deleteError.message);
+   return;
+ }
+
+const rows = [...tenantBody.rows].map((r,index) => ({
+   month: month,
+ display_order:index,
+   tenant_name: r.querySelector('.name').value,
+   previous_kwh: Number(r.querySelector('.prev').value || 0),
+   current_kwh: Number(r.querySelector('.curr').value || 0),
+   price_per_kwh: Number(r.querySelector('.price').value || 0),
+   status: r.querySelector('.status').value,
+  proof_url:r.dataset.proofUrl || ''
+ }));
+
+ console.log("Saving rows:", rows);
+
+ if(rows.length){
+   const { error } =
+   await supabaseClient
+     .from('elec_tenant_bills')
+     .insert(rows);
+
+   if(error){
+     console.error(error);
+     alert(error.message);
+     return;
+   }
+ }
+
+await loadDB();
+
+console.log("DB after save:", db);
+console.log("Saved to Supabase");}
+
+
+async function loadMonth(){
+
+ await loadDB();
+
+ console.log("Loading month:", currentMonth());
+ console.log("Month data:", db.months[currentMonth()]);
+
+ ensureMonth(currentMonth());
+
+ tenantBody.innerHTML='';
+
+ let m=db.months[currentMonth()];
+
+ console.log("Tenants found:", m.tenants);
+
+m.tenants.forEach(addTenantRow);
+
+filterTenants();}
+
+function addTenant(){
+  addTenantRow({
+    id:'T'+Date.now(),
+    previous:0,
+    price:'',
+    status:'Unpaid'
+  });
+}
+function addTenantRow(t){
+ let tr=document.createElement('tr');
+ tr.dataset.id=t.id||('T'+Date.now()+Math.random());
+ tr.innerHTML=`
+ <td><input class="name" value="${t.name||''}" style="width:95%"></td>
+ <td><input class="prev kwh-input" type="number" value="${t.previous||0}" oninput="calc(this)"></td>
+ <td><input class="curr kwh-input" type="number" value="${t.current||''}" oninput="calc(this)"></td>
+ <td class="cons">0</td>
+ <td><input class="price kwh-input" type="number" value="${t.price ?? ''}" oninput="calc(this)"></td>
+ <td class="total">₱0.00</td>
+ <td><select class="status" style="width:90%" onchange="statusColor(this)"><option>Unpaid</option><option>Paid</option></select></td>
+<td class="proof-cell">
+
+  <input
+    type="file"
+    class="proofFile"
+    accept="image/*"
+    capture="environment"
+    onchange="uploadProof(this)"
+      style="max-width:100px"
+  >
+
+  <div class="proofLink">
+    ${
+      t.proof_url
+      ? `<a href="${t.proof_url}" target="_blank" style="color:#93c5fd">View</a>`
+      : ''
+    }
+  </div>
+</td> <td><button onclick="this.closest('tr').remove()">Delete</button></td>`;
+ tenantBody.appendChild(tr);
+ tr.querySelector('.status').value=t.status||'Unpaid';
+ statusColor(tr.querySelector('.status'));
+ calc(tr.querySelector('.curr'));
+}
+
+function calc(el){
+ let r=el.closest('tr');
+ let p=+r.querySelector('.prev').value||0;
+ let c=+r.querySelector('.curr').value||0;
+let pr = Number(r.querySelector('.price').value || 0);
+ let used=Math.max(0,c-p);
+ r.querySelector('.cons').innerText=used;
+ r.querySelector('.total').innerText='₱'+(used*pr).toFixed(2);
+}
+
+function statusColor(s){s.className='status '+(s.value==='Paid'?'paid':'unpaid');}
+function filterTenants(){
+
+  const search =
+    document.getElementById('tenantSearch')
+      .value
+      .toLowerCase()
+      .trim();
+
+  [...tenantBody.rows].forEach(row => {
+
+    const tenantName =
+      row.querySelector('.name')
+         .value
+         .toLowerCase();
+
+    row.style.display =
+      tenantName.includes(search)
+      ? ''
+      : 'none';
+
+  });
+
+}
+async function uploadProof(input){
+
+ const file = input.files[0];
+
+ if(!file) return;
+
+ const fileName =
+   Date.now() + "_" + file.name;
+
+ const { error } =
+ await supabaseClient.storage
+   .from('tenant-signatures')
+   .upload(fileName,file);
+
+ if(error){
+   alert(error.message);
+   return;
+ }
+
+ const { data } =
+ supabaseClient.storage
+   .from('tenant-signatures')
+   .getPublicUrl(fileName);
+
+ const row = input.closest('tr');
+
+ row.dataset.proofUrl =
+   data.publicUrl;
+
+ input.nextElementSibling.innerHTML =
+   `<a href="${data.publicUrl}"
+       target="_blank"
+       style="color:#93c5fd">
+       View
+    </a>`;
+
+ await saveMonth();
+}
+
+
+async function exportBackup(){
+ await saveMonth();
+
+ let blob=new Blob(
+   [JSON.stringify(db,null,2)],
+   {type:'application/json'}
+ );
+
+ let a=document.createElement('a');
+ a.href=URL.createObjectURL(blob);
+ a.download='tenant_tracker_v5_backup.json';
+ a.click();
+}
+
+function importBackup(e){
+ let f=e.target.files[0]; if(!f) return;
+ let r=new FileReader();
+ r.onload=()=>{db=JSON.parse(r.result);saveDB();loadMonth();alert('Imported');};
+ r.readAsText(f);
+}
+
+async function prevMonth(){
+ if(monthSelect.selectedIndex>0){
+   await saveMonth();
+   monthSelect.selectedIndex--;
+  await loadMonth();
+await saveCurrentMonthToSupabase(); }
+}
+
+async function nextMonth(){
+ if(monthSelect.selectedIndex<monthSelect.options.length-1){
+   await saveMonth();
+   monthSelect.selectedIndex++;
+  await loadMonth();
+await saveCurrentMonthToSupabase(); }
+}
+
+
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL='https://carodzdpubzulokuvefl.supabase.co';
+const SUPABASE_KEY='sb_publishable_cnRdXcQn3gTlYYVlRe8heg_P6tucIyP';
+
+const { createClient } = window.supabase;
+const supabaseClient = createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
+
+console.log("Supabase connected:", supabaseClient);
+
+async function loadDB(){
+
+ db = { months:{} };
+
+const {data,error}=await supabaseClient
+  .from('elec_tenant_bills')
+  .select('*')
+  .order('month')
+  .order('display_order');
+ 
+if(error){
+  console.error(error);
+  return;
+}
+
+data.forEach(r=>{
+
+  if(!db.months[r.month]){
+    db.months[r.month] = {
+      tenants:[]
+    };
+  }
+
+  console.log(
+    "Loaded:",
+    r.month,
+    r.tenant_name
+  );
+
+  db.months[r.month].tenants.push({
+    id:r.id,
+    name:r.tenant_name,
+    previous:r.previous_kwh,
+    current:r.current_kwh,
+    price:r.price_per_kwh,
+    status:r.status,
+    proof_url:r.proof_url
+  });
+
+});
+
+} // closes loadDB()
+
+async function saveDB(){}
+
+
+
+window.addEventListener('load', async () => {
+
+  initMonths();
+  await loadDB();
+
+  const savedMonth =
+  await loadCurrentMonthFromSupabase();
+
+if(
+  savedMonth &&
+  [...monthSelect.options].some(
+    o => o.value === savedMonth
+  )
+){
+  monthSelect.value = savedMonth;
+}else{
+  monthSelect.value = 'March 2026';
+}
+
+  await loadMonth();
+});
+</script>
+
+</body>
+</html>

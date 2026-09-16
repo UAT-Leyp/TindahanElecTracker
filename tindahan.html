@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tindahan ni Luisa at Sonny Boy</title>
+<style>
+body{font-family:Arial,sans-serif;background:radial-gradient(circle at top left,#bfdbfe 0%,transparent 40%),radial-gradient(circle at bottom right,#93c5fd 0%,transparent 40%),#eff6ff;margin:0;padding:20px;min-height:100vh}
+.container{max-width:1200px;margin:auto;background:#ffffff;padding:24px;border-radius:18px;box-shadow:0 10px 30px rgba(0,119,182,.18);border:1px solid #d0ebff}
+.form-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:10px}
+.sales-grid{display:grid;grid-template-columns:2fr 1fr auto;gap:10px}
+input,select,textarea{padding:10px;border:1px solid #b6d4fe;border-radius:10px;background:#fff}
+button{padding:10px 14px;border:none;border-radius:10px;color:#fff;cursor:pointer;font-weight:600}
+.add-btn,.save-btn{background:#4dabf7}.sell-btn{background:#228be6}.delete-btn{background:#fa5252}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{border:1px solid #ddd;padding:8px;text-align:center}
+th{background:#339af0;color:#fff}
+.summary{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-top:15px}
+.card,.box{background:#f8fbff;padding:15px;border-radius:14px;border:1px solid #d0ebff;box-shadow:0 3px 10px rgba(51,154,240,.08)}
+.low{background:#d0ebff}
+.large-text{
+font-size:1.25em !important;
+}
+
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+const SUPABASE_URL =
+'https://carodzdpubzulokuvefl.supabase.co';
+
+const SUPABASE_KEY =
+'sb_publishable_cnRdXcQn3gTlYYVlRe8heg_P6tucIyP';
+
+const {
+    createClient
+} = supabase;
+
+const db = createClient(
+    SUPABASE_URL,
+    SUPABASE_KEY
+);
+
+console.log("Supabase Connected", db);
+</script>
+
+</head>
+<body>
+<a href="/" aria-label="Back to app selection" style="position:fixed;top:12px;right:12px;z-index:9999;background:#228be6;color:#fff;text-decoration:none;padding:9px 12px;border-radius:10px;font:600 14px Arial,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.18)">← Home</a>
+
+<div class="container">
+<div style="background:#d1ecff;border:1px solid #74c0fc;padding:10px;border-radius:10px;margin-bottom:15px;">
+☁️ Tindahan ni Sonny Boy
+</div>
+
+<h1 style="background:linear-gradient(135deg,#4dabf7,#228be6);color:white;padding:18px;border-radius:14px;margin-top:0;">🏪 Tindahan Tracker and Pricing</h1>
+
+<h3>Add Product</h3>
+<div class="form-grid">
+<input id="product" placeholder="Product Name">
+<select id="category">
+<option>Drinks</option><option>Snacks</option><option>Canned Goods</option>
+<option>Rice</option><option>Noodles</option><option>Household</option><option>Others</option>
+</select>
+<input id="price" type="number" placeholder="Price">
+<input id="stock" type="number" placeholder="Stock">
+<button class="add-btn" onclick="addProduct()">Add</button>
+</div>
+
+<input id="searchProduct" placeholder="🔍 Search Product..." oninput="renderInventory()" style="width:100%;margin:15px 0;">
+
+<table>
+<thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Value</th><th>Action</th></tr></thead>
+<tbody id="inventoryBody"></tbody>
+</table>
+
+<h3>Record Sale</h3>
+<div class="sales-grid">
+<select id="saleProduct"></select>
+<input id="saleQty" type="number" placeholder="Quantity">
+<button class="sell-btn" onclick="recordSale()">Record Sale</button>
+</div>
+
+
+
+
+<div class="summary">
+<div class="card">Inventory Value<br>₱<span id="inventoryValue">0</span></div>
+<div class="card">Today's Profit<br>₱<span id="dailyProfit">0</span></div>
+</div>
+
+<div style="text-align:center;margin:15px;">
+<button style="background:#6f42c1;" onclick="toggleLargeText()">👓 Large Text Mode</button>
+<button class="save-btn" onclick="manualSave()">Save Now</button>
+<button class="delete-btn" onclick="clearHistory()">Delete History</button>
+<button style="background:#74c0fc;" onclick="clearProfit()">Clear Profit</button>
+<button style="background:#339af0;" onclick="clearInventory()">Clear Inventory</button>
+<div id="saveStatus"></div>
+</div>
+
+
+<div class="box" style="margin-top:15px">
+<h3>📞 Supplier Directory</h3>
+
+<div style="display:grid;grid-template-columns:2fr 1fr auto;gap:10px;">
+<input id="supplierName" placeholder="Supplier Name">
+<input id="supplierContact" placeholder="Contact Number">
+<button class="save-btn" onclick="addSupplier()">Add Supplier</button>
+</div>
+
+<table>
+<thead>
+<tr>
+<th>Supplier Name</th>
+<th>Contact Number</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody id="supplierBody"></tbody>
+</table>
+</div>
+
+<div class="box">
+<h3>Store Notes</h3>
+<textarea id="storeNotes" rows="5" style="width:100%"></textarea>
+</div>
+<div class="box" style="margin-top:15px">
+    <h3>Edit History</h3>
+<ul id="historyList"></ul>
+
+</div>
+<div class="box" style="margin-top:15px">
+    
+<h3>🛒 Customer Cart</h3>
+<div style="display:grid;grid-template-columns:2fr 1fr auto;gap:10px;">
+<select id="cartProduct"></select>
+<input id="cartQty" type="number" placeholder="Quantity">
+<button class="save-btn" onclick="addToCart()">Add To Cart</button>
+</div>
+<table>
+<thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+<tbody id="cartBody"></tbody>
+</table>
+<p><strong>Cart Total: ₱<span id="cartTotal">0.00</span></strong></p>
+<input id="cashReceived" type="number" placeholder="Cash Received" oninput="renderCart()">
+<p><strong>Change: ₱<span id="changeAmount">0.00</span></strong></p>
+<button class="sell-btn" onclick="checkoutCart()">Checkout Sale</button>
+</div><h3>💳 Customer Ledger (Utang)</h3>
+
+<div style="display:grid;grid-template-columns:2fr 1fr auto auto;gap:10px;">
+<input id="customerName" placeholder="Customer Name">
+<input id="customerDebt" type="number" placeholder="Amount">
+<button class="save-btn" onclick="addDebt()">Add Debt</button>
+<button class="sell-btn" onclick="receivePayment()">Receive Payment</button>
+</div>
+
+<table>
+<thead>
+<tr>
+<th>Customer</th>
+<th>Outstanding Debt</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody id="ledgerBody"></tbody>
+</table>
+</div>
+
+
+
+<div class="box" style="margin-top:15px">
+<h3>📜 Customer Debt History</h3>
+<div id="debtHistoryList"></div>
+</div>
+
+<div class="box" style="margin-top:15px">
+<h3>🏆 Top Debtors</h3>
+<div id="topDebtorsList"></div>
+</div>
+<div class="box" style="margin-top:15px">
+
+</div>
+    </div>
+<script>
+let inventory = [];
+
+async function loadInventory(){
+
+    const { data, error } =
+    await db
+.from('pos_inventory')
+    .select('*')
+    .order('id');
+
+    if(error){
+        console.error(error);
+        return;
+    }
+
+    inventory = data || [];
+
+    renderInventory();
+}
+
+    async function loadHistory(){
+
+    const { data, error } =
+    await db
+    .from('pos_history_logs')
+    .select('*')
+    .order('id',{ascending:false});
+
+    if(error){
+        console.error(error);
+        return;
+    }
+
+    historyLogs = data || [];
+
+    renderHistory();
+}
+  let profits=JSON.parse(localStorage.getItem('profits')||'{}');
+let historyLogs=[];
+    const today=new Date().toLocaleDateString();
+
+let suppliers=[]; //for supplier data
+let ledger=[]; 
+let debtHistory=[];
+
+async function addDebtHistory(
+    customerName,
+    actionType,
+    amount,
+    notes
+){
+
+    const { error } =
+    await db
+    .from('pos_debt_history')
+    .insert([{
+        customer_name:customerName,
+        action_type:actionType,
+        amount:amount,
+        notes:notes
+    }]);
+
+    if(error){
+        console.error(error);
+        return;
+    }
+
+    await loadDebtHistory();
+}
+
+   async function deleteDebtHistory(i){
+
+    const item =
+    debtHistory[i];
+
+    if(!confirm(
+        'Delete this history entry?'
+    )) return;
+
+    const { error } =
+    await db
+    .from('pos_debt_history')
+    .delete()
+    .eq('id',item.id);
+
+    if(error){
+        alert(error.message);
+        return;
+    }
+
+    await loadDebtHistory();
+}
+
+function renderDebtHistory(){
+
+    const box =
+    document.getElementById(
+        'debtHistoryList'
+    );
+
+    if(!box) return;
+
+    box.innerHTML='';
+
+    debtHistory.forEach((item,i)=>{
+
+        box.innerHTML += `
+        <div style="
+        padding:8px;
+        margin-bottom:5px;
+        background:#eef7ff;
+        border-radius:8px;
+        display:flex;
+        justify-content:space-between;
+        align-items:center;">
+
+            <span>
+            ${item.customer_name}
+            -
+            ${item.action_type}
+            -
+            ₱${Number(item.amount).toFixed(2)}
+            </span>
+
+            <button
+            class="delete-btn"
+            onclick="deleteDebtHistory(${i})">
+            Delete
+            </button>
+
+        </div>`;
+    });
+}
+
+function toggleLargeText(){
+document.body.classList.toggle('large-text');
+localStorage.setItem('largeTextEnabled',document.body.classList.contains('large-text'));
+}
+
+
+async function loadLedger(){
+
+    const { data, error } =
+    await db
+    .from('pos_ledger')
+    .select('*')
+    .order('customer_name');
+
+    if(error){
+        console.error(error);
+        return;
+    }
+
+    ledger = data || [];
+
+    renderLedger();
+    renderTopDebtors();
+}
+    async function loadDebtHistory(){
+
+    const { data, error } =
+    await db
+    .from('pos_debt_history')
+    .select('*')
+    .order('id',{ascending:false});
+
+    if(error){
+        console.error(error);
+        return;
+    }
+
+    debtHistory = data || [];
+
+    renderDebtHistory();
+}
+
+async function addDebt(){
+
+    const name =
+    document.getElementById('customerName')
+    .value.trim();
+
+    const amount =
+    Number(
+        document.getElementById(
+            'customerDebt'
+        ).value
+    );
+
+    if(!name || amount<=0){
+        alert('Enter customer and amount');
+        return;
+    }
+
+    const existing =
+    ledger.find(
+        x => x.customer_name === name
+    );
+
+    if(existing){
+
+        const { error } =
+        await db
+        .from('pos_ledger')
+        .update({
+            outstanding_balance:
+            Number(existing.outstanding_balance)
+            + amount,
+            updated_at:
+            new Date().toISOString()
+        })
+        .eq('id',existing.id);
+
+        if(error){
+            alert(error.message);
+            return;
+        }
+
+    }else{
+
+        const { error } =
+        await db
+        .from('pos_ledger')
+        .insert([{
+            customer_name:name,
+            outstanding_balance:amount
+        }]);
+
+        if(error){
+            alert(error.message);
+            return;
+        }
+    }
+
+    await addHistory(
+        'Added debt for ' +
+        name +
+        ' ₱' +
+        amount
+    );
+
+  await addDebtHistory(
+    name,
+    'Debt Added',
+    amount,
+    ''
+);
+
+    await loadLedger();
+}
+
+async function receivePayment(){
+
+    const name =
+    document.getElementById('customerName')
+    .value.trim();
+
+    const amount =
+    Number(
+        document.getElementById(
+            'customerDebt'
+        ).value
+    );
+
+    if(!name || amount<=0){
+        alert('Enter customer and payment');
+        return;
+    }
+
+    const existing =
+    ledger.find(
+        x => x.customer_name === name
+    );
+
+    if(!existing){
+        alert('Customer not found');
+        return;
+    }
+
+    const remaining =
+    Number(existing.outstanding_balance)
+    - amount;
+
+    if(remaining <= 0){
+
+        const { error } =
+        await db
+        .from('pos_ledger')
+        .delete()
+        .eq('id',existing.id);
+
+        if(error){
+            alert(error.message);
+            return;
+        }
+
+    }else{
+
+        const { error } =
+        await db
+        .from('pos_ledger')
+        .update({
+            outstanding_balance:
+            remaining,
+            updated_at:
+            new Date().toISOString()
+        })
+        .eq('id',existing.id);
+
+        if(error){
+            alert(error.message);
+            return;
+        }
+    }
+
+    await addHistory(
+        'Payment received from ' +
+        name +
+        ' ₱' +
+        amount
+    );
+
+  await addDebtHistory(
+    name,
+    'Payment Received',
+    amount,
+    ''
+);
+
+    await loadLedger();
+}
+
+async function deleteLedger(i){
+
+    const customer =
+    ledger[i];
+
+    const { error } =
+    await db
+    .from('pos_ledger')
+    .delete()
+    .eq('id',customer.id);
+
+    if(error){
+        alert(error.message);
+        return;
+    }
+
+    await addHistory(
+        'Deleted ledger for ' +
+        customer.customer_name
+    );
+
+    await loadLedger();
+}
+function renderLedger(){
+
+    const body =
+    document.getElementById(
+        'ledgerBody'
+    );
+
+    if(!body) return;
+
+    body.innerHTML='';
+
+    ledger.forEach((c,i)=>{
+
+        body.innerHTML += `
+        <tr>
+        <td>${c.customer_name}</td>
+        <td>₱${Number(c.outstanding_balance).toFixed(2)}</td>
+        <td>
+        <button
+        class="delete-btn"
+        onclick="deleteLedger(${i})">
+        Delete
+        </button>
+        </td>
+        </tr>`;
+    });
+}
+
+
+function renderTopDebtors(){
+
+    const box =
+    document.getElementById(
+        'topDebtorsList'
+    );
+
+    if(!box) return;
+
+    const sorted =
+    [...ledger]
+    .sort(
+        (a,b)=>
+        Number(b.outstanding_balance)
+        -
+        Number(a.outstanding_balance)
+    )
+    .slice(0,10);
+
+    if(sorted.length===0){
+
+        box.innerHTML =
+        '<p>No debtors recorded.</p>';
+
+        return;
+    }
+
+    box.innerHTML='';
+
+    sorted.forEach((d,i)=>{
+
+        box.innerHTML += `
+        <div style="
+        padding:10px;
+        margin-bottom:8px;
+        background:#eef7ff;
+        border-radius:10px;">
+
+        <strong>
+        #${i+1}
+        ${d.customer_name}
+        </strong><br>
+
+        Outstanding Debt:
+        ₱${Number(
+            d.outstanding_balance
+        ).toFixed(2)}
+
+        </div>`;
+    });
+}
+//ADD SUPPLIER
+async function addSupplier(){
+
+    const name =
+    document.getElementById('supplierName')
+    .value.trim();
+
+    const contact =
+    document.getElementById('supplierContact')
+    .value.trim();
+
+    if(!name || !contact){
+        alert(
+            'Enter supplier name and contact number'
+        );
+        return;
+    }
+
+    const { error } =
+    await db
+    .from('pos_suppliers')
+    .insert([{
+        supplier_name:name,
+        contact_number:contact
+    }]);
+
+    if(error){
+        alert(error.message);
+        return;
+    }
+
+    await addHistory(
+        'Added supplier: ' + name
+    );
+
+    document.getElementById(
+        'supplierName'
+    ).value='';
+
+    document.getElementById(
+        'supplierContact'
+    ).value='';
+
+    await loadSuppliers();
+}
+
+async function deleteSupplier(i){
+
+    const supplier =
+    suppliers[i];
+
+    const { error } =
+    await db
+    .from('pos_suppliers')
+    .delete()
+    .eq('id', supplier.id);
+
+    if(error){
+        alert(error.message);
+        return;
+    }
+
+    await addHistory(
+        'Deleted supplier: ' +
+        supplier.supplier_name
+    );
+
+    await loadSuppliers();
+}
+
+function renderSuppliers(){
+
+    const body =
+    document.getElementById(
+        'supplierBody'
+    );
+
+    if(!body) return;
+
+    body.innerHTML='';
+
+    suppliers.forEach((s,i)=>{
+
+        body.innerHTML += `
+        <tr>
+        <td>${s.supplier_name}</td>
+        <td>${s.contact_number}</td>
+        <td>
+        <button
+        class="delete-btn"
+        onclick="deleteSupplier(${i})">
+        Delete
+        </button>
+        </td>
+        </tr>`;
+    });
+}
+
+if(!profits[today]) profits[today]=0;
+
+let cart=[];
+
+function updateCartDropdown(){
+const d=document.getElementById('cartProduct');
+if(!d)return;
+d.innerHTML='';
+inventory.forEach((x,i)=>d.innerHTML+=`<option value="${i}">${x.product}</option>`);
+}
+
+function addToCart(){
+const i=document.getElementById('cartProduct').value;
+const q=Number(document.getElementById('cartQty').value);
+const item=inventory[i];
+if(!item||q<=0)return;
+cart.push({index:Number(i),product:item.product,price:item.price,qty:q});
+renderCart();
+}
+
+function renderCart(){
+const body=document.getElementById('cartBody');
+if(!body)return;
+body.innerHTML='';
+let total=0;
+cart.forEach(c=>{
+const t=c.price*c.qty;
+total+=t;
+body.innerHTML+=`<tr><td>${c.product}</td><td>${c.qty}</td><td>₱${c.price}</td><td>₱${t.toFixed(2)}</td></tr>`;
+});
+document.getElementById('cartTotal').innerText=total.toFixed(2);
+const cash=Number(document.getElementById('cashReceived')?.value||0);
+document.getElementById('changeAmount').innerText=(cash-total).toFixed(2);
+}
+
+function checkoutCart(){
+if(cart.length===0)return alert('Cart is empty');
+let total=0;
+for(const c of cart){
+const item=inventory[c.index];
+if(!item||item.stock<c.qty){alert('Not enough stock for '+c.product);return;}
+item.stock-=c.qty;
+total+=c.price*c.qty;
+}
+profits[today]+=total;
+dailyProfit.innerText=profits[today].toFixed(2);
+addHistory('Checkout Sale Total ₱'+total.toFixed(2));
+cart=[];
+renderCart();
+renderInventory();
+}
+
+
+function saveData(){
+localStorage.setItem('profits',JSON.stringify(profits));
+
+document.getElementById('saveStatus').innerText='Saved '+new Date().toLocaleTimeString();
+}
+    async function loadStoreNotes(){
+
+    const { data, error } =
+    await db
+    .from('pos_settings')
+    .select('store_notes')
+    .eq('id',1)
+    .single();
+
+    if(error){
+        console.error(error);
+        return;
+    }
+
+    document.getElementById('storeNotes').value =
+    data?.store_notes || '';
+}
+async function loadSuppliers(){
+
+    const { data, error } =
+    await db
+    .from('pos_suppliers')
+    .select('*')
+    .order('id');
+
+    if(error){
+        console.error(error);
+        return;
+    }
+
+    suppliers = data || [];
+
+    renderSuppliers();
+}
+async function saveStoreNotes(){
+
+    const notes =
+    document.getElementById('storeNotes').value;
+
+    const { error } =
+    await db
+    .from('pos_settings')
+    .update({
+        store_notes:notes,
+        updated_at:new Date().toISOString()
+    })
+    .eq('id',1);
+
+    if(error){
+        console.error(error);
+    }
+}
+ //EDIT HISTORY
+async function addHistory(msg){
+
+    const { error } =
+    await db
+    .from('pos_history_logs')
+    .insert([{
+        action:
+        new Date().toLocaleString()
+        + ' - ' +
+        msg
+    }]);
+
+    if(error){
+        console.error(error);
+        return;
+    }
+
+    await loadHistory();
+} 
+function renderHistory(){
+
+    document.getElementById(
+        'historyList'
+    ).innerHTML = historyLogs
+    .map(x =>
+        '<li>' +
+        x.action +
+        '</li>'
+    )
+    .join('');
+}
+async function addProduct(){
+
+    const p = product.value.trim();
+
+    if(!p || !price.value || !stock.value){
+        alert("Complete all fields");
+        return;
+    }
+
+    const { error } =
+    await db
+    .from('pos_inventory')
+    .insert([{
+        product:p,
+        category:category.value,
+        price:+price.value,
+        stock:+stock.value
+    }]);
+
+    if(error){
+        alert(error.message);
+        return;
+    }
+
+    product.value="";
+    price.value="";
+    stock.value="";
+
+    await addHistory(
+        'Added product: ' + p
+    );
+
+    await loadInventory();
+}
+
+   
+async function deleteProduct(i){
+
+    const item = inventory[i];
+
+    const { error } =
+    await db
+    .from('pos_inventory')
+    .delete()
+    .eq('id', item.id);
+
+    if(error){
+        alert(error.message);
+        return;
+    }
+
+    await addHistory(
+        'Deleted product: ' +
+        item.product
+    );
+
+    await loadInventory();
+}
+function recordSale(){
+const i=saleProduct.value,q=+saleQty.value,item=inventory[i];
+if(!item||q<=0)return;
+if(item.stock<q)return alert('Not enough stock');
+item.stock-=q;
+profits[today]+=item.price*q;
+addHistory('Sold '+q+' x '+item.product);
+dailyProfit.innerText=profits[today].toFixed(2);
+saleQty.value='';
+renderInventory();
+}
+function updateSalesDropdown(){
+saleProduct.innerHTML='';
+inventory.forEach((x,i)=>saleProduct.innerHTML+=`<option value="${i}">${x.product}</option>`);
+}
+function renderInventory(){
+const s=(searchProduct.value||'').toLowerCase();
+inventoryBody.innerHTML='';
+inventory.forEach((x,i)=>{
+if(!x.product.toLowerCase().includes(s)&&!x.category.toLowerCase().includes(s)) return;
+inventoryBody.innerHTML+=`<tr class="${x.stock<=5?'low':''}">
+<td>${x.product}</td><td>${x.category}</td><td>₱${x.price}</td>
+<td>${x.stock}${x.stock<=5?' ⚠️':''}</td>
+<td>₱${(x.price*x.stock).toFixed(2)}</td>
+<td><button class="delete-btn" onclick="deleteProduct(${i})">Delete</button></td>
+</tr>`;
+});
+inventoryValue.innerText=inventory.reduce((a,b)=>a+b.price*b.stock,0).toFixed(2);
+updateSalesDropdown();
+updateCartDropdown();
+saveData();
+}
+function manualSave(){addHistory('Manual Save');}
+
+async function clearHistory(){
+
+    if(!confirm(
+        'Delete all history?'
+    )) return;
+
+    const { error } =
+    await db
+    .from('pos_history_logs')
+    .delete()
+    .gt('id',0);
+
+    if(error){
+        alert(error.message);
+        return;
+    }
+
+    historyLogs=[];
+
+    renderHistory();
+}
+
+function clearProfit(){
+if(!confirm('Reset today\'s profit?')) return;
+profits[today]=0;
+dailyProfit.innerText='0.00';
+saveData();
+addHistory('Profit Reset');
+}
+
+async function clearInventory(){
+
+    if(!confirm('Delete all inventory items?'))
+        return;
+
+    const { error } =
+await db
+    .from('pos_inventory')
+    .delete()
+    .gt('id',0);
+
+    if(error){
+        alert(error.message);
+        return;
+    }
+
+    inventory=[];
+
+    await loadInventory();
+
+    addHistory('Inventory Cleared');
+}
+
+storeNotes.addEventListener('input',saveStoreNotes);
+    dailyProfit.innerText=(profits[today]||0).toFixed(2);
+if(localStorage.getItem('largeTextEnabled')==='true'){
+document.body.classList.add('large-text');
+}
+
+loadHistory();
+loadLedger();
+loadDebtHistory();
+renderTopDebtors();
+loadSuppliers();
+loadInventory();
+loadStoreNotes();
+</script>
+</body></html>
