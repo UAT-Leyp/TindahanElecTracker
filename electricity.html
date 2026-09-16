@@ -85,6 +85,7 @@ td:first-child{
 
 <div class="actions" style="margin-top:10px">
 <button onclick="addTenant()">Add Tenant</button>
+<button onclick="openCopyMonthModal()">📋 Copy From Month</button>
 <button onclick="saveMonth()">Save Data</button>
 <button onclick="exportBackup()">Export Backup</button>
 
@@ -201,11 +202,12 @@ function prevLabel(m){let list=months(),i=list.indexOf(m);return i>0?list[i-1]:n
 function ensureMonth(m){
  if(db.months[m]) return;
 
- let p = prevLabel(m);
+ const p = prevLabel(m);
 
+ // Always carry the same tenants forward from the previous month.
+ // Previous month's CURRENT kWh becomes the new month's PREVIOUS kWh.
+ // Current kWh, payment status, and proof start fresh for the new month.
  if(p && db.months[p]){
-   console.log("Creating month:", m);
-
    db.months[m] = {
      tenants: db.months[p].tenants.map(t => ({
        id: t.id,
@@ -214,16 +216,250 @@ function ensureMonth(m){
        current: '',
        price: t.price ?? '',
        status: 'Unpaid',
-        proof_url: ''
+       proof_url: ''
      }))
    };
- } else {
-   db.months[m] = {
-     tenants: []
-   };
+ }else{
+   db.months[m] = { tenants: [] };
  }
 
  saveDB();
+}
+
+function escapeHtml(value){
+ return String(value ?? '')
+   .replaceAll('&','&amp;')
+   .replaceAll('<','&lt;')
+   .replaceAll('>','&gt;')
+   .replaceAll('\"','&quot;')
+   .replaceAll("'",'&#039;');
+}
+
+function closeCopyMonthModal(){
+ const modal = document.getElementById('copyMonthModal');
+ if(modal) modal.remove();
+}
+
+function getCopySourceMonths(){
+ return months().filter(month => month !== currentMonth());
+}
+
+async function getElecMonthRows(month){
+ const { data, error } = await supabaseClient
+   .from('elec_tenant_bills')
+   .select('*')
+   .eq('month', month)
+   .order('display_order');
+
+ if(error){
+   console.error(error);
+   alert('Could not load ' + month + '.');
+   return null;
+ }
+
+ return data || [];
+}
+
+function openCopyMonthModal(){
+ const sourceMonths = getCopySourceMonths();
+
+ const overlay = document.createElement('div');
+ overlay.id = 'copyMonthModal';
+ overlay.style.cssText = `
+   position:fixed;
+   inset:0;
+   background:rgba(0,0,0,.78);
+   z-index:10000;
+   display:flex;
+   align-items:center;
+   justify-content:center;
+   padding:20px;
+   overflow:auto;
+ `;
+
+ overlay.innerHTML = `
+   <div style="background:#17122a;border:1px solid rgba(255,255,255,.18);border-radius:18px;width:min(760px,100%);max-height:90vh;overflow:auto;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.5);color:white">
+     <h2 style="margin-top:0;color:#c4b5fd">📋 COPY FROM MONTH</h2>
+     <div id="copyStep1">
+       <p style="opacity:.85">Select the month you want to copy tenants from.</p>
+       <select id="copySourceMonth" style="width:100%;padding:12px;border-radius:10px;font-size:16px;margin-bottom:20px">
+         ${sourceMonths.map(month => `<option value="${escapeHtml(month)}">${escapeHtml(month)}</option>`).join('')}
+       </select>
+       <div style="display:flex;gap:10px;justify-content:flex-end">
+         <button onclick="closeCopyMonthModal()" style="background:#dc2626">CANCEL</button>
+         <button onclick="loadCopyChoices()">NEXT</button>
+       </div>
+     </div>
+     <div id="copyStep2" style="display:none"></div>
+   </div>
+ `;
+
+ overlay.addEventListener('click', event => {
+   if(event.target === overlay) closeCopyMonthModal();
+ });
+
+ document.body.appendChild(overlay);
+}
+
+async function loadCopyChoices(){
+ const sourceMonth = document.getElementById('copySourceMonth').value;
+ if(!sourceMonth) return;
+
+ if(sourceMonth === currentMonth()){
+   alert('You cannot copy from the current month.');
+   return;
+ }
+
+ const rows = await getElecMonthRows(sourceMonth);
+ if(rows === null) return;
+
+ if(rows.length === 0){
+   alert('No tenant data found for ' + sourceMonth + '.');
+   return;
+ }
+
+ const step = document.getElementById('copyStep2');
+ step.innerHTML = `
+   <h3 style="margin-top:0">Copy from ${escapeHtml(sourceMonth)}</h3>
+
+   <div style="border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:16px;margin-bottom:16px">
+     <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+       <h3 style="margin:0">👤 TENANTS</h3>
+       <label style="display:flex;align-items:center;gap:7px;width:auto">
+         <input type="checkbox" id="copySelectAll" checked onchange="toggleAllCopyTenants(this.checked)" style="width:auto"> Select all
+       </label>
+     </div>
+     <div style="display:grid;gap:8px;max-height:280px;overflow:auto">
+       ${rows.map((row,index) => `
+         <label style="display:flex;gap:10px;align-items:center;padding:9px;border-radius:8px;background:rgba(255,255,255,.04)">
+           <input type="checkbox" class="copy-tenant" value="${index}" checked style="width:auto">
+           <span>${escapeHtml(row.tenant_name || 'Unnamed Tenant')}</span>
+         </label>
+       `).join('')}
+     </div>
+   </div>
+
+   <div style="border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:16px;margin-bottom:16px">
+     <h3 style="margin-top:0">FIELDS TO COPY</h3>
+     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+       <label><input type="checkbox" class="copy-field" value="name" checked style="width:auto"> TENANT NAME</label>
+       <label><input type="checkbox" class="copy-field" value="previousFromCurrent" checked style="width:auto"> SOURCE CURRENT → NEW PREVIOUS</label>
+       <label><input type="checkbox" class="copy-field" value="current" style="width:auto"> CURRENT kWh</label>
+       <label><input type="checkbox" class="copy-field" value="price" checked style="width:auto"> PRICE / kWh</label>
+       <label><input type="checkbox" class="copy-field" value="status" style="width:auto"> STATUS</label>
+       <label><input type="checkbox" class="copy-field" value="proof" style="width:auto"> PROOF LINK</label>
+     </div>
+   </div>
+
+   <div style="font-size:13px;opacity:.78;margin-bottom:16px;line-height:1.45">
+     Existing tenants with the same name are updated only for the selected fields.
+     New tenants are added to the current month. By default, the source month&apos;s Current kWh becomes the new month&apos;s Previous kWh, Current stays blank, Status stays Unpaid, and proof stays blank.
+   </div>
+
+   <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+     <button onclick="document.getElementById('copyStep2').style.display='none';document.getElementById('copyStep1').style.display='block'" style="background:#475569">BACK</button>
+     <button onclick="closeCopyMonthModal()" style="background:#dc2626">CANCEL</button>
+     <button onclick="performSelectiveTenantCopy()">COPY SELECTED</button>
+   </div>
+ `;
+
+ step.dataset.sourceRows = JSON.stringify(rows);
+ document.getElementById('copyStep1').style.display = 'none';
+ step.style.display = 'block';
+}
+
+function toggleAllCopyTenants(checked){
+ document.querySelectorAll('.copy-tenant').forEach(input => {
+   input.checked = checked;
+ });
+}
+
+async function performSelectiveTenantCopy(){
+ const step = document.getElementById('copyStep2');
+ const sourceMonth = document.getElementById('copySourceMonth').value;
+ const sourceRows = JSON.parse(step.dataset.sourceRows || '[]');
+
+ const selectedIndexes = Array.from(document.querySelectorAll('.copy-tenant:checked'))
+   .map(input => Number(input.value));
+
+ const selectedFields = Array.from(document.querySelectorAll('.copy-field:checked'))
+   .map(input => input.value);
+
+ if(selectedIndexes.length === 0){
+   alert('Select at least one tenant.');
+   return;
+ }
+
+ if(selectedFields.length === 0){
+   alert('Select at least one field to copy.');
+   return;
+ }
+
+ selectedIndexes.forEach(index => {
+   const source = sourceRows[index];
+   if(!source) return;
+
+   const sourceName = String(source.tenant_name || '').trim();
+   if(!sourceName) return;
+
+   let targetRow = [...tenantBody.rows].find(row =>
+     String(row.querySelector('.name')?.value || '').trim().toLowerCase() === sourceName.toLowerCase()
+   );
+
+   if(!targetRow){
+     addTenantRow({
+       name: sourceName,
+       previous: 0,
+       current: '',
+       price: '',
+       status: 'Unpaid',
+       proof_url: ''
+     });
+     targetRow = tenantBody.rows[tenantBody.rows.length - 1];
+   }
+
+   const nameInput = targetRow.querySelector('.name');
+   const prevInput = targetRow.querySelector('.prev');
+   const currInput = targetRow.querySelector('.curr');
+   const priceInput = targetRow.querySelector('.price');
+   const statusSelect = targetRow.querySelector('.status');
+
+   if(selectedFields.includes('name')){
+     nameInput.value = sourceName;
+   }
+
+   if(selectedFields.includes('previousFromCurrent')){
+     prevInput.value = source.current_kwh ?? 0;
+   }
+
+   if(selectedFields.includes('current')){
+     currInput.value = source.current_kwh ?? '';
+   }
+
+   if(selectedFields.includes('price')){
+     priceInput.value = source.price_per_kwh ?? '';
+   }
+
+   if(selectedFields.includes('status')){
+     statusSelect.value = source.status || 'Unpaid';
+     statusColor(statusSelect);
+   }
+
+   if(selectedFields.includes('proof')){
+     targetRow.dataset.proofUrl = source.proof_url || '';
+     const proofLink = targetRow.querySelector('.proofLink');
+     proofLink.innerHTML = source.proof_url
+       ? `<a href="${escapeHtml(source.proof_url)}" target="_blank" style="color:#93c5fd">View</a>`
+       : '';
+   }
+
+   calc(currInput);
+ });
+
+ await saveMonth();
+ await loadMonth();
+ closeCopyMonthModal();
+ alert(`Selected tenants copied from ${sourceMonth}.`);
 }
 async function saveMonth(){
 
