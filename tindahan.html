@@ -22,6 +22,23 @@ th{background:#339af0;color:#fff}
 font-size:1.25em !important;
 }
 
+
+#saveStatus{
+  display:inline-flex;
+  align-items:center;
+  min-height:20px;
+  margin-top:8px;
+  padding:4px 9px;
+  border-bottom:1px solid #339af0;
+  color:#1c7ed6;
+  font-size:14px;
+  font-weight:700;
+  opacity:0;
+  transition:opacity .15s ease;
+}
+#saveStatus.visible{opacity:1}
+#saveStatus.error{color:#e03131;border-bottom-color:#fa5252}
+
 </style>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -96,7 +113,7 @@ console.log("Supabase Connected", db);
 <button class="delete-btn" onclick="clearHistory()">Delete History</button>
 <button style="background:#74c0fc;" onclick="clearProfit()">Clear Profit</button>
 <button style="background:#339af0;" onclick="clearInventory()">Clear Inventory</button>
-<div id="saveStatus"></div>
+<div id="saveStatus" role="status" aria-live="polite"></div>
 </div>
 
 
@@ -769,10 +786,35 @@ renderInventory();
 }
 
 
-function saveData(){
-localStorage.setItem('profits',JSON.stringify(profits));
+let saveStatusTimer = null;
 
-document.getElementById('saveStatus').innerText='Saved '+new Date().toLocaleTimeString();
+function setSaveStatus(text, state='normal'){
+  const el = document.getElementById('saveStatus');
+  if(!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('visible', Boolean(text));
+  el.classList.toggle('error', state === 'error');
+}
+
+function showSaving(){
+  clearTimeout(saveStatusTimer);
+  setSaveStatus('Saving...');
+}
+
+function showSaved(){
+  clearTimeout(saveStatusTimer);
+  setSaveStatus('✓ Saved');
+  saveStatusTimer = setTimeout(() => setSaveStatus(''), 2500);
+}
+
+function showSaveError(){
+  clearTimeout(saveStatusTimer);
+  setSaveStatus('⚠ Save failed', 'error');
+}
+
+function saveData(){
+  localStorage.setItem('profits',JSON.stringify(profits));
+  showSaved();
 }
     async function loadStoreNotes(){
 
@@ -810,6 +852,8 @@ async function loadSuppliers(){
 }
 async function saveStoreNotes(){
 
+    showSaving();
+
     const notes =
     document.getElementById('storeNotes').value;
 
@@ -824,7 +868,12 @@ async function saveStoreNotes(){
 
     if(error){
         console.error(error);
+        showSaveError();
+        return false;
     }
+
+    showSaved();
+    return true;
 }
  //EDIT HISTORY
 async function addHistory(msg){
@@ -841,10 +890,13 @@ async function addHistory(msg){
 
     if(error){
         console.error(error);
-        return;
+        showSaveError();
+        return false;
     }
 
     await loadHistory();
+    showSaved();
+    return true;
 } 
 function renderHistory(){
 
@@ -948,7 +1000,12 @@ updateSalesDropdown();
 updateCartDropdown();
 saveData();
 }
-function manualSave(){addHistory('Manual Save');}
+async function manualSave(){
+  showSaving();
+  saveData();
+  const ok = await addHistory('Manual Save');
+  if(ok !== false) showSaved();
+}
 
 async function clearHistory(){
 
