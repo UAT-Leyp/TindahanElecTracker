@@ -16,7 +16,7 @@ table{
   border-collapse:collapse;
   table-layout:fixed;
 }
- th:nth-child(1), td:nth-child(1){ width:20%; } /* Tenant xxxx*/
+ th:nth-child(1), td:nth-child(1){ width:20%; } /* Tenant */
 th:nth-child(2), td:nth-child(2){ width:8%; }  /* Previous */
 th:nth-child(3), td:nth-child(3){ width:8%; }  /* Current */
 th:nth-child(4), td:nth-child(4){ width:6%; }  /* Consumed */
@@ -800,10 +800,15 @@ function calc(el){
  let r=el.closest('tr');
  let p=+r.querySelector('.prev').value||0;
  let c=+r.querySelector('.curr').value||0;
-let pr = Number(r.querySelector('.price').value || 0);
+ let pr=Number(r.querySelector('.price').value||0);
+
+ // Round the calculated consumption to 2 decimal places so floating-point
+ // values such as 100.39999999999964 display cleanly as 100.40.
  let used=Math.max(0,c-p);
- r.querySelector('.cons').innerText=used;
- r.querySelector('.total').innerText='₱'+(used*pr).toFixed(2);
+ let usedRounded=Math.round((used+Number.EPSILON)*100)/100;
+
+ r.querySelector('.cons').innerText=usedRounded.toFixed(2);
+ r.querySelector('.total').innerText='₱'+(usedRounded*pr).toFixed(2);
 }
 
 function statusColor(s){s.className='status '+(s.value==='Paid'?'paid':'unpaid');}
