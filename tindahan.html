@@ -150,10 +150,17 @@ console.log("Supabase Connected", db);
 <div class="box" style="margin-top:15px">
     
 <h3>🛒 Customer Cart</h3>
-<div style="display:grid;grid-template-columns:2fr 1fr auto;gap:10px;">
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;">
 <select id="cartProduct"></select>
-<input id="cartQty" type="number" placeholder="Quantity">
-<button class="save-btn" onclick="addToCart()">Add To Cart</button>
+<input
+  id="cartQty"
+  type="number"
+  min="1"
+  step="1"
+  placeholder="Quantity"
+  onchange="addToCart()"
+  onkeydown="if(event.key==='Enter'){event.preventDefault();addToCart();}"
+>
 </div>
 <table>
 <thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
@@ -755,12 +762,35 @@ inventory.forEach((x,i)=>d.innerHTML+=`<option value="${i}">${x.product}</option
 }
 
 function addToCart(){
-const i=document.getElementById('cartProduct').value;
-const q=Number(document.getElementById('cartQty').value);
+const productSelect=document.getElementById('cartProduct');
+const qtyInput=document.getElementById('cartQty');
+const i=productSelect.value;
+const q=Number(qtyInput.value);
 const item=inventory[i];
-if(!item||q<=0)return;
-cart.push({index:Number(i),product:item.product,price:item.price,qty:q});
+
+if(!item || !Number.isFinite(q) || q<=0) return;
+
+const existingQty=cart
+  .filter(c=>c.index===Number(i))
+  .reduce((sum,c)=>sum+Number(c.qty||0),0);
+
+if(existingQty+q>Number(item.stock||0)){
+  alert('Not enough stock for '+item.product);
+  qtyInput.value='';
+  qtyInput.focus();
+  return;
+}
+
+const existingCartItem=cart.find(c=>c.index===Number(i));
+if(existingCartItem){
+  existingCartItem.qty+=q;
+}else{
+  cart.push({index:Number(i),product:item.product,price:item.price,qty:q});
+}
+
+qtyInput.value='';
 renderCart();
+qtyInput.focus();
 }
 
 function updatePaymentMethodUI(){
@@ -1189,4 +1219,4 @@ loadSuppliers();
 loadInventory();
 loadStoreNotes();
 </script>
-</body></html>
+</body></html>            
