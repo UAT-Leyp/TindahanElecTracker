@@ -101,6 +101,7 @@ td:first-child{
 <div class="actions" style="margin-top:10px">
 <button onclick="addTenant()">Add Tenant</button>
 <button onclick="openCopyMonthModal()">📋 Copy From Month</button>
+<button onclick="reflectForward()" title="Save this month and reflect carry-forward changes to all later months">🔄 Reflect</button>
 <button onclick="saveMonth()">Save Data</button>
 <button onclick="exportBackup()">Export Backup</button>
 
@@ -506,6 +507,178 @@ async function performSelectiveTenantCopy(){
  closeCopyMonthModal();
  alert(`Selected tenants copied from ${sourceMonth}.`);
 }
+async function reflectForward(){
+ const sourceMonth = currentMonth();
+ const monthList = months();
+ const sourceIndex = monthList.indexOf(sourceMonth);
+
+ if(sourceIndex < 0 || sourceIndex >= monthList.length - 1){
+   alert('There are no later months to reflect into.');
+   return;
+ }
+
+ const confirmed = confirm(
+   `Reflect changes from ${sourceMonth} to all later months?\n\n` +
+   `This will update tenant names, carry the CURRENT kWh into the next month as PREVIOUS kWh, and carry Price/kWh forward.\n\n` +
+   `Existing future Current kWh, Status, Proof, Notes, and other month-specific data will NOT be overwritten.`
+ );
+
+ if(!confirmed) return;
+
+ showSaving();
+
+ try{
+   // Read the currently saved version first so a renamed tenant can still
+   // be matched to its old name in later months.
+   const { data: oldSourceRows, error: oldSourceError } =
+   await supabaseClient
+     .from('elec_tenant_bills')
+     .select('*')
+     .eq('month', sourceMonth)
+     .order('display_order');
+
+   if(oldSourceError) throw oldSourceError;
+
+   const oldByOrder = new Map(
+     (oldSourceRows || []).map((row,index) => [
+       Number.isFinite(Number(row.display_order)) ? Number(row.display_order) : index,
+       row
+     ])
+   );
+
+   // Capture the edited rows that are currently visible before saveMonth()
+   // reloads the table from Supabase.
+   const editedRows = [...tenantBody.rows].map((row,index) => ({
+     display_order: index,
+     tenant_name: row.querySelector('.name').value.trim(),
+     previous_kwh: Number(row.querySelector('.prev').value || 0),
+     current_kwh: Number(row.querySelector('.curr').value || 0),
+     price_per_kwh: Number(row.querySelector('.price').value || 0),
+     status: row.querySelector('.status').value,
+     proof_url: row.dataset.proofUrl || ''
+   }));
+
+   const saved = await saveMonth();
+   if(!saved) return;
+
+   showSaving();
+
+   // Keep aliases for each tenant so renames can be followed through
+   // already-existing future months even though each month has its own UUID.
+   let chain = editedRows.map((row,index) => {
+     const oldRow = oldByOrder.get(index);
+     const aliases = new Set();
+     const newName = String(row.tenant_name || '').trim().toLowerCase();
+     const oldName = String(oldRow?.tenant_name || '').trim().toLowerCase();
+     if(newName) aliases.add(newName);
+     if(oldName) aliases.add(oldName);
+     return { row, aliases };
+   });
+
+   for(let i = sourceIndex + 1; i < monthList.length; i++){
+     const targetMonth = monthList[i];
+
+     const { data: targetRows, error: targetError } =
+     await supabaseClient
+       .from('elec_tenant_bills')
+       .select('*')
+       .eq('month', targetMonth)
+       .order('display_order');
+
+     if(targetError) throw targetError;
+
+     const existingRows = targetRows || [];
+     const usedIds = new Set();
+     const nextChain = [];
+
+     for(let order = 0; order < chain.length; order++){
+       const source = chain[order];
+       const sourceRow = source.row;
+
+       let match = existingRows.find(row => {
+         if(usedIds.has(row.id)) return false;
+         const name = String(row.tenant_name || '').trim().toLowerCase();
+         return name && source.aliases.has(name);
+       });
+
+       // Fall back to display order if the tenant was renamed and no old-name
+       // match remains. This is useful because the tracker keeps tenant order.
+       if(!match){
+         match = existingRows.find((row,index) => {
+           if(usedIds.has(row.id)) return false;
+           const rowOrder = Number.isFinite(Number(row.display_order))
+             ? Number(row.display_order)
+             : index;
+           return rowOrder === order;
+         });
+       }
+
+       const reflected = {
+         tenant_name: sourceRow.tenant_name,
+         previous_kwh: Number(sourceRow.current_kwh || 0),
+         price_per_kwh: Number(sourceRow.price_per_kwh || 0),
+         display_order: order
+       };
+
+       let resultingRow;
+
+       if(match){
+         usedIds.add(match.id);
+
+         const oldTargetName = String(match.tenant_name || '').trim().toLowerCase();
+         if(oldTargetName) source.aliases.add(oldTargetName);
+
+         const { data: updated, error: updateError } =
+         await supabaseClient
+           .from('elec_tenant_bills')
+           .update(reflected)
+           .eq('id', match.id)
+           .select('*')
+           .single();
+
+         if(updateError) throw updateError;
+         resultingRow = updated;
+       }else{
+         const { data: inserted, error: insertError } =
+         await supabaseClient
+           .from('elec_tenant_bills')
+           .insert({
+             month: targetMonth,
+             ...reflected,
+             current_kwh: 0,
+             status: 'Unpaid',
+             proof_url: ''
+           })
+           .select('*')
+           .single();
+
+         if(insertError) throw insertError;
+         resultingRow = inserted;
+       }
+
+       const resultName = String(resultingRow.tenant_name || '').trim().toLowerCase();
+       if(resultName) source.aliases.add(resultName);
+
+       nextChain.push({
+         row: resultingRow,
+         aliases: source.aliases
+       });
+     }
+
+     chain = nextChain;
+   }
+
+   await loadMonth();
+   showSaved();
+   alert(`Changes from ${sourceMonth} were reflected through all later months.`);
+
+ }catch(error){
+   console.error('Reflect failed:', error);
+   showSaveError();
+   alert('Reflect failed: ' + (error?.message || error));
+ }
+}
+
 async function saveMonth(){
 
  showSaving();
