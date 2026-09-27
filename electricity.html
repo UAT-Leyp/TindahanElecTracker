@@ -152,12 +152,54 @@ body.tenant-view-mode.tenant-edit-unlocked select.status{
   opacity:1;
   box-shadow:0 0 0 1px rgba(34,197,94,.55) inset;
 }
+.history-view-picker{
+  display:none;
+  align-items:center;
+  gap:8px;
+  flex:1 1 300px;
+}
+.history-view-picker.visible{display:flex}
+.history-view-picker label{
+  white-space:nowrap;
+  color:#ddd6fe;
+  font-weight:700;
+}
+.history-view-picker select{max-width:360px}
+.history-panel{display:none;margin-top:14px}
+.history-panel.visible{display:block}
+.history-summary{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:10px;
+  margin:12px 0 16px;
+}
+.history-stat{
+  background:#223b63;
+  border:1px solid rgba(139,92,246,.45);
+  border-radius:12px;
+  padding:12px;
+}
+.history-stat .label{font-size:12px;color:#cbd5e1;margin-bottom:5px}
+.history-stat .value{font-size:20px;font-weight:800;color:#ddd6fe}
+.history-empty{
+  display:none;
+  padding:18px;
+  margin-top:10px;
+  border:1px dashed rgba(196,181,253,.55);
+  border-radius:12px;
+  color:#cbd5e1;
+  text-align:center;
+}
+body.history-view-mode .actions{display:none}
+body.history-view-mode .controls{display:none}
+body.history-view-mode #trackerTableSection{display:none}
  
 @media(max-width:768px){
  .controls,.actions{flex-direction:column}
- .tenant-view-picker{align-items:stretch;flex-direction:column}
- .tenant-view-picker select{max-width:none}
+ .tenant-view-picker,.history-view-picker{align-items:stretch;flex-direction:column}
+ .tenant-view-picker select,.history-view-picker select{max-width:none}
  .tenant-view-note{margin-left:0;width:100%}
+ .history-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
  table{font-size:12px}
 }
 </style>
@@ -179,7 +221,7 @@ body.tenant-view-mode.tenant-edit-unlocked select.status{
 <button onclick="openCopyMonthModal()">📋 Copy From Month</button>
 <button onclick="reflectForward()" title="Save this month and reflect carry-forward changes to all later months">🔄 Reflect</button>
 <button onclick="saveMonth()">Save Data</button>
-<button onclick="exportBackup()">Export Backup</button>
+<button onclick="exportBackup()">💾 Export Backup (JSON)</button>
 
 <input
   type="text"
@@ -199,6 +241,7 @@ body.tenant-view-mode.tenant-edit-unlocked select.status{
 <div class="view-switcher" aria-label="Electricity tracker view mode">
   <button id="viewAllBtn" class="active-view" type="button" onclick="setTrackerView('all')">👁 View All</button>
   <button id="viewTenantBtn" type="button" onclick="setTrackerView('tenant')">👤 View Tenant</button>
+  <button id="viewHistoryBtn" type="button" onclick="setTrackerView('history')">📊 View History</button>
 
   <div id="tenantViewPicker" class="tenant-view-picker">
     <label for="tenantViewSelect">Tenant:</label>
@@ -207,11 +250,42 @@ body.tenant-view-mode.tenant-edit-unlocked select.status{
     </select>
   </div>
 
+  <div id="historyViewPicker" class="history-view-picker">
+    <label for="historyTenantSelect">Tenant:</label>
+    <select id="historyTenantSelect" onchange="selectHistoryTenant(this.value)">
+      <option value="">Select tenant...</option>
+    </select>
+  </div>
+
   <button id="toggleTenantEditBtn" class="tenant-edit-toggle" type="button" onclick="toggleTenantEditing()">🔓 Unlock Editing</button>
+  <button id="exportPdfBtn" type="button" onclick="exportPDF()">📄 Export PDF</button>
 
   <span id="tenantViewNote" class="tenant-view-note">Owner view — all tenants are visible.</span>
 </div>
 
+<div id="historyPanel" class="history-panel">
+  <h2 id="historyTitle">Tenant Consumption History</h2>
+  <div class="history-summary">
+    <div class="history-stat"><div class="label">Total Consumption</div><div class="value" id="historyTotalConsumption">0.00 kWh</div></div>
+    <div class="history-stat"><div class="label">Average / Recorded Month</div><div class="value" id="historyAverageConsumption">0.00 kWh</div></div>
+    <div class="history-stat"><div class="label">Highest Consumption</div><div class="value" id="historyHighestConsumption">0.00 kWh</div></div>
+    <div class="history-stat"><div class="label">Recorded Months</div><div class="value" id="historyRecordedMonths">0</div></div>
+  </div>
+  <div style="overflow-x:auto">
+    <table>
+      <thead>
+        <tr>
+          <th>Month</th><th>Previous kWh</th><th>Current kWh</th><th>Consumed</th>
+          <th>Price/kWh</th><th>Total Bill</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="historyBody"></tbody>
+    </table>
+  </div>
+  <div id="historyEmpty" class="history-empty">Select a tenant to view their consumption history.</div>
+</div>
+
+<div id="trackerTableSection">
 <h2>Electricity Tracker</h2>
 <table>
 <thead>
@@ -222,6 +296,7 @@ body.tenant-view-mode.tenant-edit-unlocked select.status{
 </thead>
 <tbody id="tenantBody"></tbody>
 </table>
+</div>
 </div>
 
 
@@ -235,6 +310,8 @@ let tenantProfilesCache = [];
 let trackerViewMode = 'all';
 let selectedTenantViewKey = '';
 let tenantEditUnlocked = false;
+let historyRowsCache = [];
+let selectedHistoryTenantKey = '';
 
 function tenantRowViewKey(row){
   const tenantId = String(row?.dataset?.tenantId || '').trim();
@@ -270,6 +347,170 @@ function refreshTenantViewDropdown(){
     select.value = '';
     selectedTenantViewKey = '';
   }
+}
+
+function historyDataKey(row){
+  const tenantId = String(row?.tenant_id || '').trim();
+  if(tenantId) return 'id:' + tenantId;
+  const name = String(row?.tenant_name || '').trim().toLowerCase();
+  return name ? 'name:' + name : '';
+}
+
+function getSelectedHistoryRows(){
+  if(!selectedHistoryTenantKey) return [];
+  const monthOrder = months();
+  return historyRowsCache
+    .filter(row => historyDataKey(row) === selectedHistoryTenantKey)
+    .sort((a,b) => {
+      const ai = monthOrder.indexOf(a.month);
+      const bi = monthOrder.indexOf(b.month);
+      if(ai !== -1 || bi !== -1){
+        if(ai === -1) return 1;
+        if(bi === -1) return -1;
+        return ai - bi;
+      }
+      return String(a.month || '').localeCompare(String(b.month || ''));
+    });
+}
+
+async function loadHistoryTenantChoices(){
+  const select = document.getElementById('historyTenantSelect');
+  if(!select) return;
+
+  const { data, error } = await supabaseClient
+    .from('elec_tenant_bills')
+    .select('tenant_id,tenant_name,month,previous_kwh,current_kwh,price_per_kwh,status,proof_url,display_order');
+
+  if(error){
+    console.error(error);
+    alert('Could not load tenant history: ' + error.message);
+    return;
+  }
+
+  historyRowsCache = data || [];
+  const choices = [];
+  const seen = new Set();
+
+  historyRowsCache.forEach(row => {
+    const key = historyDataKey(row);
+    const name = String(row.tenant_name || 'Unnamed Tenant').trim() || 'Unnamed Tenant';
+    if(!key || seen.has(key)) return;
+    seen.add(key);
+    choices.push({key,name});
+  });
+
+  choices.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+
+  const preferred = selectedHistoryTenantKey || selectedTenantViewKey || '';
+  select.innerHTML = '<option value="">Select tenant...</option>' +
+    choices.map(item => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.name)}</option>`).join('');
+
+  if(preferred && choices.some(item => item.key === preferred)){
+    select.value = preferred;
+    selectedHistoryTenantKey = preferred;
+  }else if(choices.length === 1){
+    select.selectedIndex = 1;
+    selectedHistoryTenantKey = select.value;
+  }else{
+    select.value = '';
+    selectedHistoryTenantKey = '';
+  }
+
+  renderHistoryView();
+}
+
+function selectHistoryTenant(value){
+  selectedHistoryTenantKey = value || '';
+  renderHistoryView();
+  applyTrackerView();
+}
+
+function renderHistoryView(){
+  const body = document.getElementById('historyBody');
+  const empty = document.getElementById('historyEmpty');
+  const title = document.getElementById('historyTitle');
+  if(!body || !empty) return;
+
+  body.innerHTML = '';
+  const rows = getSelectedHistoryRows();
+  const select = document.getElementById('historyTenantSelect');
+  const tenantName = selectedHistoryTenantKey
+    ? (select?.options[select.selectedIndex]?.text || 'Tenant')
+    : '';
+
+  if(title){
+    title.textContent = tenantName
+      ? `${tenantName} — Consumption History`
+      : 'Tenant Consumption History';
+  }
+
+  if(!selectedHistoryTenantKey){
+    empty.style.display = 'block';
+    empty.textContent = 'Select a tenant to view their consumption history.';
+    updateHistorySummary([]);
+    return;
+  }
+
+  if(rows.length === 0){
+    empty.style.display = 'block';
+    empty.textContent = 'No electricity records were found for this tenant.';
+    updateHistorySummary([]);
+    return;
+  }
+
+  empty.style.display = 'none';
+  rows.forEach(row => {
+    const previous = Number(row.previous_kwh || 0);
+    const current = Number(row.current_kwh || 0);
+    const price = Number(row.price_per_kwh || 0);
+    const consumed = Math.max(0, current - previous);
+    const total = consumed * price;
+
+    body.innerHTML += `
+      <tr>
+        <td>${escapeHtml(row.month || '')}</td>
+        <td>${previous.toFixed(2)}</td>
+        <td>${current.toFixed(2)}</td>
+        <td><strong>${consumed.toFixed(2)}</strong></td>
+        <td>₱${price.toFixed(2)}</td>
+        <td>₱${total.toFixed(2)}</td>
+        <td>${escapeHtml(row.status || '')}</td>
+      </tr>`;
+  });
+
+  updateHistorySummary(rows);
+}
+
+function updateHistorySummary(rows){
+  const calculated = rows.map(row => {
+    const previous = Number(row.previous_kwh || 0);
+    const current = Number(row.current_kwh || 0);
+    return {
+      month: row.month || '',
+      current,
+      consumed: Math.max(0, current - previous)
+    };
+  });
+
+  // Treat months with an actual current meter reading as recorded months so
+  // future/blank rows saved as zero do not reduce the historical average.
+  const recorded = calculated.filter(item => item.current > 0);
+  const total = recorded.reduce((sum,item) => sum + item.consumed, 0);
+  const average = recorded.length ? total / recorded.length : 0;
+  const highest = recorded.reduce((best,item) =>
+    !best || item.consumed > best.consumed ? item : best, null);
+
+  const totalEl = document.getElementById('historyTotalConsumption');
+  const avgEl = document.getElementById('historyAverageConsumption');
+  const highEl = document.getElementById('historyHighestConsumption');
+  const countEl = document.getElementById('historyRecordedMonths');
+
+  if(totalEl) totalEl.textContent = total.toFixed(2) + ' kWh';
+  if(avgEl) avgEl.textContent = average.toFixed(2) + ' kWh';
+  if(highEl) highEl.textContent = highest
+    ? `${highest.consumed.toFixed(2)} kWh (${highest.month})`
+    : '0.00 kWh';
+  if(countEl) countEl.textContent = String(recorded.length);
 }
 
 function setTenantEditingUnlocked(unlocked){
@@ -320,15 +561,20 @@ function relockTenantEditing(){
   }
 }
 
-function setTrackerView(mode){
-  trackerViewMode = mode === 'tenant' ? 'tenant' : 'all';
+async function setTrackerView(mode){
+  trackerViewMode = mode === 'tenant' ? 'tenant' : (mode === 'history' ? 'history' : 'all');
   const isTenant = trackerViewMode === 'tenant';
+  const isHistory = trackerViewMode === 'history';
 
   setTenantEditingUnlocked(false);
   document.body.classList.toggle('tenant-view-mode', isTenant);
-  document.getElementById('viewAllBtn')?.classList.toggle('active-view', !isTenant);
+  document.body.classList.toggle('history-view-mode', isHistory);
+  document.getElementById('viewAllBtn')?.classList.toggle('active-view', !isTenant && !isHistory);
   document.getElementById('viewTenantBtn')?.classList.toggle('active-view', isTenant);
+  document.getElementById('viewHistoryBtn')?.classList.toggle('active-view', isHistory);
   document.getElementById('tenantViewPicker')?.classList.toggle('visible', isTenant);
+  document.getElementById('historyViewPicker')?.classList.toggle('visible', isHistory);
+  document.getElementById('historyPanel')?.classList.toggle('visible', isHistory);
 
   if(isTenant){
     refreshTenantViewDropdown();
@@ -337,10 +583,14 @@ function setTrackerView(mode){
       select.selectedIndex = 1;
       selectedTenantViewKey = select.value;
     }
-  }else{
+  }else if(!isHistory){
     selectedTenantViewKey = '';
     const select = document.getElementById('tenantViewSelect');
     if(select) select.value = '';
+  }
+
+  if(isHistory){
+    await loadHistoryTenantChoices();
   }
 
   updateTenantEditButton();
@@ -382,7 +632,15 @@ function applyTrackerView(){
   });
 
   if(note){
-    if(!isTenant){
+    if(trackerViewMode === 'history'){
+      const historySelect = document.getElementById('historyTenantSelect');
+      const historyLabel = selectedHistoryTenantKey
+        ? (historySelect?.options[historySelect.selectedIndex]?.text || 'Selected tenant')
+        : '';
+      note.textContent = historyLabel
+        ? `History view — showing only ${historyLabel} across all recorded months.`
+        : 'History view — select one tenant to see their month-by-month consumption.';
+    }else if(!isTenant){
       note.textContent = 'Owner view — all tenants are visible.';
     }else if(!selectedTenantViewKey){
       note.textContent = 'Tenant view — select one tenant to display.';
@@ -1233,6 +1491,163 @@ async function uploadProof(input){
 }
 
 
+function safePdfFilePart(value){
+  return String(value || '')
+    .trim()
+    .replace(/[^a-z0-9_-]+/gi, '_')
+    .replace(/^_+|_+$/g, '') || 'Report';
+}
+
+function getPdfRows(){
+  const rows = [...tenantBody.rows];
+
+  if(trackerViewMode === 'tenant'){
+    return rows.filter(row => tenantRowViewKey(row) === selectedTenantViewKey);
+  }
+
+  // View All exports every tenant for the month, even if the owner has typed
+  // something in the search box and some rows are temporarily filtered out.
+  return rows;
+}
+
+async function exportPDF(){
+  if(!window.jspdf?.jsPDF){
+    alert('PDF export library did not load. Please check your internet connection and try again.');
+    return;
+  }
+
+  if(trackerViewMode === 'history'){
+    if(!selectedHistoryTenantKey){
+      alert('Select a tenant first.');
+      return;
+    }
+
+    const historyRows = getSelectedHistoryRows();
+    if(historyRows.length === 0){
+      alert('There is no history to export for this tenant.');
+      return;
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation:'landscape', unit:'pt', format:'a4' });
+    const historySelect = document.getElementById('historyTenantSelect');
+    const tenantName = historySelect?.options[historySelect.selectedIndex]?.text || 'Tenant';
+
+    doc.setFontSize(18);
+    doc.text('ARAGON Tenant Electricity Tracker', 40, 42);
+    doc.setFontSize(11);
+    doc.text(`Consumption History: ${tenantName}`, 40, 62);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 40, 78);
+
+    const body = historyRows.map(row => {
+      const previous = Number(row.previous_kwh || 0);
+      const current = Number(row.current_kwh || 0);
+      const price = Number(row.price_per_kwh || 0);
+      const consumed = Math.max(0, current - previous);
+      return [
+        row.month || '',
+        previous.toFixed(2),
+        current.toFixed(2),
+        consumed.toFixed(2),
+        `PHP ${price.toFixed(2)}`,
+        `PHP ${(consumed * price).toFixed(2)}`,
+        row.status || ''
+      ];
+    });
+
+    if(typeof doc.autoTable !== 'function'){
+      alert('PDF table library did not load. Please check your internet connection and try again.');
+      return;
+    }
+
+    doc.autoTable({
+      startY: 96,
+      head: [['Month','Previous kWh','Current kWh','Consumed','Price/kWh','Total Bill','Status']],
+      body,
+      styles: { fontSize:9, cellPadding:5 },
+      headStyles: { fontStyle:'bold' },
+      margin: { left:40, right:40 }
+    });
+
+    doc.save(`ARAGON_Electricity_History_${safePdfFilePart(tenantName)}.pdf`);
+    return;
+  }
+
+  if(trackerViewMode === 'tenant' && !selectedTenantViewKey){
+    alert('Select a tenant first.');
+    return;
+  }
+
+  const rows = getPdfRows();
+  if(rows.length === 0){
+    alert('There is no tenant data to export for this view.');
+    return;
+  }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:'landscape', unit:'pt', format:'a4' });
+  const month = currentMonth();
+  const tenantSelect = document.getElementById('tenantViewSelect');
+  const selectedTenantName = trackerViewMode === 'tenant'
+    ? (tenantSelect?.options[tenantSelect.selectedIndex]?.text || 'Tenant')
+    : 'All Tenants';
+
+  doc.setFontSize(18);
+  doc.text('ARAGON Tenant Electricity Tracker', 40, 42);
+  doc.setFontSize(11);
+  doc.text(`Month: ${month}`, 40, 62);
+  doc.text(`View: ${selectedTenantName}`, 40, 78);
+  doc.text(`Generated: ${new Date().toLocaleString()}`, 40, 94);
+
+  const body = rows.map(row => {
+    const name = String(row.querySelector('.name')?.value || '').trim();
+    const previous = Number(row.querySelector('.prev')?.value || 0);
+    const current = Number(row.querySelector('.curr')?.value || 0);
+    const price = Number(row.querySelector('.price')?.value || 0);
+    const consumed = Math.max(0, current - previous);
+    const status = String(row.querySelector('.status')?.value || '');
+    const proof = row.dataset.proofUrl ? 'Available' : '-';
+
+    return [
+      name,
+      previous.toFixed(2),
+      current.toFixed(2),
+      consumed.toFixed(2),
+      `PHP ${price.toFixed(2)}`,
+      `PHP ${(consumed * price).toFixed(2)}`,
+      status,
+      proof
+    ];
+  });
+
+  if(typeof doc.autoTable !== 'function'){
+    alert('PDF table library did not load. Please check your internet connection and try again.');
+    return;
+  }
+
+  doc.autoTable({
+    startY: 112,
+    head: [[
+      'Tenant',
+      'Previous kWh',
+      'Current kWh',
+      'Consumed',
+      'Price/kWh',
+      'Total Bill',
+      'Status',
+      'Proof'
+    ]],
+    body,
+    styles: { fontSize:9, cellPadding:5 },
+    headStyles: { fontStyle:'bold' },
+    margin: { left:40, right:40 }
+  });
+
+  const monthPart = safePdfFilePart(month);
+  const viewPart = safePdfFilePart(selectedTenantName);
+  doc.save(`ARAGON_Electricity_${monthPart}_${viewPart}.pdf`);
+}
+
 async function exportBackup(){
  await saveMonth();
 
@@ -1275,6 +1690,8 @@ await saveCurrentMonthToSupabase(); }
 
 </script>
 
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const SUPABASE_URL='https://carodzdpubzulokuvefl.supabase.co';
