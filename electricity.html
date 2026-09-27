@@ -83,9 +83,66 @@ td:first-child{
 }
 .save-status.visible{opacity:1}
 .save-status.error{color:#fecaca;border-bottom-color:#ef4444}
+
+.view-switcher{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+  margin:4px 0 14px;
+  padding:12px;
+  background:#1d1236;
+  border:1px solid rgba(139,92,246,.75);
+  border-radius:12px;
+}
+.view-switcher button{
+  min-width:120px;
+  font-weight:700;
+}
+.view-switcher button.active-view{
+  background:#c4b5fd;
+  color:#1b0d32;
+  box-shadow:0 0 0 2px rgba(255,255,255,.12) inset;
+}
+.tenant-view-picker{
+  display:none;
+  align-items:center;
+  gap:8px;
+  flex:1 1 280px;
+}
+.tenant-view-picker.visible{display:flex}
+.tenant-view-picker label{
+  white-space:nowrap;
+  color:#ddd6fe;
+  font-weight:700;
+}
+.tenant-view-picker select{
+  max-width:360px;
+}
+.tenant-view-note{
+  color:#cbd5e1;
+  font-size:13px;
+  margin-left:auto;
+}
+body.tenant-view-mode .actions{display:none}
+body.tenant-view-mode th.action-col,
+body.tenant-view-mode td.action-col{display:none}
+body.tenant-view-mode .proofFile{display:none !important}
+body.tenant-view-mode .tenant-profile-link{
+  pointer-events:none;
+  text-decoration:none;
+  color:#fff;
+}
+body.tenant-view-mode input:not([type=hidden]),
+body.tenant-view-mode select.status{
+  opacity:.9;
+}
  
 @media(max-width:768px){
  .controls,.actions{flex-direction:column}
+ .tenant-view-picker{align-items:stretch;flex-direction:column}
+ .tenant-view-picker select{max-width:none}
+ .tenant-view-note{margin-left:0;width:100%}
  table{font-size:12px}
 }
 </style>
@@ -124,12 +181,26 @@ td:first-child{
 </div>
 
 <div class="card">
+<div class="view-switcher" aria-label="Electricity tracker view mode">
+  <button id="viewAllBtn" class="active-view" type="button" onclick="setTrackerView('all')">👁 View All</button>
+  <button id="viewTenantBtn" type="button" onclick="setTrackerView('tenant')">👤 View Tenant</button>
+
+  <div id="tenantViewPicker" class="tenant-view-picker">
+    <label for="tenantViewSelect">Tenant:</label>
+    <select id="tenantViewSelect" onchange="selectTenantView(this.value)">
+      <option value="">Select tenant...</option>
+    </select>
+  </div>
+
+  <span id="tenantViewNote" class="tenant-view-note">Owner view — all tenants are visible.</span>
+</div>
+
 <h2>Electricity Tracker</h2>
 <table>
 <thead>
 <tr>
 <th>Tenant</th><th>Previous kWh</th><th>Current kWh</th><th>Consumed</th>
-<th>Price/kWh</th><th>Total Bill</th><th>Status</th><th>Proof/Notes</th><th>Action</th>
+<th>Price/kWh</th><th>Total Bill</th><th>Status</th><th>Proof/Notes</th><th class="action-col">Action</th>
 </tr>
 </thead>
 <tbody id="tenantBody"></tbody>
@@ -144,6 +215,114 @@ const KEY='tenant_tracker_v5';
 let db={months:{}};
 let saveStatusTimer = null;
 let tenantProfilesCache = [];
+let trackerViewMode = 'all';
+let selectedTenantViewKey = '';
+
+function tenantRowViewKey(row){
+  const tenantId = String(row?.dataset?.tenantId || '').trim();
+  if(tenantId) return 'id:' + tenantId;
+  const name = String(row?.querySelector('.name')?.value || '').trim().toLowerCase();
+  return name ? 'name:' + name : '';
+}
+
+function refreshTenantViewDropdown(){
+  const select = document.getElementById('tenantViewSelect');
+  if(!select) return;
+
+  const previous = selectedTenantViewKey || select.value;
+  const choices = [];
+  const seen = new Set();
+
+  [...tenantBody.rows].forEach(row => {
+    const key = tenantRowViewKey(row);
+    const name = String(row.querySelector('.name')?.value || 'Unnamed Tenant').trim() || 'Unnamed Tenant';
+    if(!key || seen.has(key)) return;
+    seen.add(key);
+    choices.push({ key, name });
+  });
+
+  choices.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+  select.innerHTML = '<option value="">Select tenant...</option>' +
+    choices.map(item => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.name)}</option>`).join('');
+
+  if(previous && choices.some(item => item.key === previous)){
+    select.value = previous;
+    selectedTenantViewKey = previous;
+  }else{
+    select.value = '';
+    selectedTenantViewKey = '';
+  }
+}
+
+function setTrackerView(mode){
+  trackerViewMode = mode === 'tenant' ? 'tenant' : 'all';
+  const isTenant = trackerViewMode === 'tenant';
+
+  document.body.classList.toggle('tenant-view-mode', isTenant);
+  document.getElementById('viewAllBtn')?.classList.toggle('active-view', !isTenant);
+  document.getElementById('viewTenantBtn')?.classList.toggle('active-view', isTenant);
+  document.getElementById('tenantViewPicker')?.classList.toggle('visible', isTenant);
+
+  if(isTenant){
+    refreshTenantViewDropdown();
+    const select = document.getElementById('tenantViewSelect');
+    if(select && !select.value && select.options.length === 2){
+      select.selectedIndex = 1;
+      selectedTenantViewKey = select.value;
+    }
+  }else{
+    selectedTenantViewKey = '';
+    const select = document.getElementById('tenantViewSelect');
+    if(select) select.value = '';
+  }
+
+  applyTrackerView();
+}
+
+function selectTenantView(value){
+  selectedTenantViewKey = value || '';
+  applyTrackerView();
+}
+
+function setRowTenantReadOnly(row, readOnly){
+  row.querySelectorAll('.prev,.curr,.price,.status').forEach(control => {
+    control.disabled = readOnly;
+  });
+
+  const proof = row.querySelector('.proofFile');
+  if(proof) proof.disabled = readOnly;
+}
+
+function applyTrackerView(){
+  const note = document.getElementById('tenantViewNote');
+  const search = String(document.getElementById('tenantSearch')?.value || '').toLowerCase().trim();
+  const isTenant = trackerViewMode === 'tenant';
+
+  [...tenantBody.rows].forEach(row => {
+    if(isTenant){
+      const key = tenantRowViewKey(row);
+      const visible = Boolean(selectedTenantViewKey) && key === selectedTenantViewKey;
+      row.style.display = visible ? '' : 'none';
+      setRowTenantReadOnly(row, true);
+    }else{
+      const tenantName = String(row.querySelector('.name')?.value || '').toLowerCase();
+      row.style.display = tenantName.includes(search) ? '' : 'none';
+      setRowTenantReadOnly(row, false);
+    }
+  });
+
+  if(note){
+    if(!isTenant){
+      note.textContent = 'Owner view — all tenants are visible.';
+    }else if(!selectedTenantViewKey){
+      note.textContent = 'Tenant view — select one tenant to display.';
+    }else{
+      const selected = document.getElementById('tenantViewSelect');
+      const label = selected?.options[selected.selectedIndex]?.text || 'Selected tenant';
+      note.textContent = `Tenant view — only ${label} is visible. Editing is locked.`;
+    }
+  }
+}
 
 function setSaveStatus(text, state='normal'){
   const el = document.getElementById('saveStatus');
@@ -768,7 +947,8 @@ async function loadMonth(){
 
 m.tenants.forEach(addTenantRow);
 
-filterTenants();}
+refreshTenantViewDropdown();
+applyTrackerView();}
 
 async function loadTenantProfilesForElec(){
  const { data, error } = await supabaseClient
@@ -870,6 +1050,8 @@ function deleteElecTenantRow(button){
  const name = row.querySelector('.name')?.value || 'this tenant';
  if(confirm(`Delete ${name} from ${currentMonth()}?\n\nThis only removes the electricity row for the current month. It does NOT delete the Tenant Information profile.`)){
    row.remove();
+   refreshTenantViewDropdown();
+   applyTrackerView();
  }
 }
 
@@ -910,7 +1092,7 @@ function addTenantRow(t){
       : ''
     }
   </div>
-</td> <td><button onclick="deleteElecTenantRow(this)">Delete</button></td>`;
+</td> <td class="action-col"><button onclick="deleteElecTenantRow(this)">Delete</button></td>`;
  tenantBody.appendChild(tr);
  tr.querySelector('.status').value=t.status||'Unpaid';
  statusColor(tr.querySelector('.status'));
@@ -934,27 +1116,7 @@ function calc(el){
 
 function statusColor(s){s.className='status '+(s.value==='Paid'?'paid':'unpaid');}
 function filterTenants(){
-
-  const search =
-    document.getElementById('tenantSearch')
-      .value
-      .toLowerCase()
-      .trim();
-
-  [...tenantBody.rows].forEach(row => {
-
-    const tenantName =
-      row.querySelector('.name')
-         .value
-         .toLowerCase();
-
-    row.style.display =
-      tenantName.includes(search)
-      ? ''
-      : 'none';
-
-  });
-
+  applyTrackerView();
 }
 async function uploadProof(input){
 
