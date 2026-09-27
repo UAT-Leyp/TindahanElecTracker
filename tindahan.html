@@ -11,7 +11,7 @@ body{font-family:Arial,sans-serif;background:radial-gradient(circle at top left,
 .sales-grid{display:grid;grid-template-columns:2fr 1fr auto;gap:10px}
 input,select,textarea{padding:10px;border:1px solid #b6d4fe;border-radius:10px;background:#fff}
 button{padding:10px 14px;border:none;border-radius:10px;color:#fff;cursor:pointer;font-weight:600}
-.add-btn,.save-btn{background:#4dabf7}.sell-btn{background:#228be6}.delete-btn{background:#fa5252}
+.add-btn,.save-btn{background:#4dabf7}.edit-btn{background:#f59f00}.sell-btn{background:#228be6}.delete-btn{background:#fa5252}
 table{width:100%;border-collapse:collapse;margin-top:10px}
 th,td{border:1px solid #ddd;padding:8px;text-align:center}
 th{background:#339af0;color:#fff}
@@ -21,6 +21,9 @@ th{background:#339af0;color:#fff}
 .large-text{
 font-size:1.25em !important;
 }
+.field-stack{display:flex;flex-direction:column;gap:6px}
+.action-buttons{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+.helper-text{font-size:12px;color:#5c7c9a;margin-top:4px}
 
 
 #saveStatus{
@@ -73,16 +76,22 @@ console.log("Supabase Connected", db);
 
 <h1 style="background:linear-gradient(135deg,#4dabf7,#228be6);color:white;padding:18px;border-radius:14px;margin-top:0;">🏪 Tindahan Tracker and Pricing</h1>
 
-<h3>Add Product</h3>
+<h3 id="productEditor">Add / Edit Product</h3>
 <div class="form-grid">
+<div class="field-stack">
+<select id="productSelector" onchange="handleProductSelection()">
+<option value="__new__">+ Add New Product</option>
+</select>
 <input id="product" placeholder="Product Name">
+<div class="helper-text">Choose an existing product to avoid duplicate names, or choose + Add New Product.</div>
+</div>
 <select id="category">
 <option>Drinks</option><option>Snacks</option><option>Canned Goods</option>
 <option>Rice</option><option>Noodles</option><option>Household</option><option>Others</option>
 </select>
-<input id="price" type="number" placeholder="Price">
-<input id="stock" type="number" placeholder="Stock">
-<button class="add-btn" onclick="addProduct()">Add</button>
+<input id="price" type="number" min="0" step="0.01" placeholder="Price">
+<input id="stock" type="number" min="0" step="1" placeholder="Stock">
+<button id="productSaveBtn" class="add-btn" onclick="addProduct()">Add Product</button>
 </div>
 
 <input id="searchProduct" placeholder="🔍 Search Product..." oninput="renderInventory()" style="width:100%;margin:15px 0;">
@@ -91,16 +100,6 @@ console.log("Supabase Connected", db);
 <thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Value</th><th>Action</th></tr></thead>
 <tbody id="inventoryBody"></tbody>
 </table>
-
-<h3>Record Sale</h3>
-<div class="sales-grid">
-<select id="saleProduct"></select>
-<input id="saleQty" type="number" placeholder="Quantity">
-<button class="sell-btn" onclick="recordSale()">Record Sale</button>
-</div>
-
-
-
 
 <div class="summary">
 <div class="card">Inventory Value<br>₱<span id="inventoryValue">0</span></div>
@@ -175,7 +174,14 @@ console.log("Supabase Connected", db);
 </select>
 
 <input id="cashReceived" type="number" min="0" step="0.01" placeholder="Cash Received" oninput="renderCart()">
-<input id="utangCustomerName" type="text" placeholder="Customer Name for Utang" style="display:none;grid-column:2;">
+<div id="utangCustomerWrap" class="field-stack" style="display:none;grid-column:2;">
+<select id="utangCustomerSelect" onchange="handleCustomerSelection('utang')">
+<option value="">Select Customer</option>
+<option value="__new__">+ Add New Customer</option>
+</select>
+<input id="utangCustomerName" type="text" placeholder="New Customer Name" style="display:none;">
+<div class="helper-text">Existing customers are listed here so the same person is not accidentally added under a different spelling.</div>
+</div>
 </div>
 
 <p id="changeRow"><strong>Change: ₱<span id="changeAmount">0.00</span></strong></p>
@@ -183,8 +189,15 @@ console.log("Supabase Connected", db);
 </div><h3>💳 Customer Ledger (Utang)</h3>
 
 <div style="display:grid;grid-template-columns:2fr 1fr auto auto;gap:10px;">
-<input id="customerName" placeholder="Customer Name">
-<input id="customerDebt" type="number" placeholder="Amount">
+<div class="field-stack">
+<select id="customerNameSelect" onchange="handleCustomerSelection('ledger')">
+<option value="">Select Customer</option>
+<option value="__new__">+ Add New Customer</option>
+</select>
+<input id="customerName" placeholder="New Customer Name" style="display:none;">
+<div class="helper-text">Select an existing customer whenever possible. Use + Add New Customer only for a new person.</div>
+</div>
+<input id="customerDebt" type="number" min="0" step="0.01" placeholder="Amount">
 <button class="save-btn" onclick="addDebt()">Add Debt</button>
 <button class="sell-btn" onclick="receivePayment()">Receive Payment</button>
 </div>
@@ -293,7 +306,7 @@ async function addDebtHistory(
     debtHistory[i];
 
     if(!confirm(
-        'Delete this history entry?'
+        'Are you sure you want to delete this debt history entry? This cannot be undone.'
     )) return;
 
     const { error } =
@@ -351,6 +364,114 @@ function renderDebtHistory(){
     });
 }
 
+function normalizeName(value){
+    return String(value || '')
+      .trim()
+      .replace(/\s+/g,' ')
+      .toLowerCase();
+}
+
+function getKnownCustomerNames(){
+    const names = new Map();
+
+    [...ledger, ...debtHistory].forEach(item => {
+        const raw = String(item?.customer_name || '').trim().replace(/\s+/g,' ');
+        const key = normalizeName(raw);
+        if(key && !names.has(key)) names.set(key, raw);
+    });
+
+    return [...names.values()].sort((a,b) => a.localeCompare(b));
+}
+
+function populateCustomerSelect(selectId){
+    const select = document.getElementById(selectId);
+    if(!select) return;
+
+    const previous = select.value;
+    select.innerHTML = '';
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Select Customer';
+    select.appendChild(placeholder);
+
+    getKnownCustomerNames().forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        select.appendChild(option);
+    });
+
+    const addNew = document.createElement('option');
+    addNew.value = '__new__';
+    addNew.textContent = '+ Add New Customer';
+    select.appendChild(addNew);
+
+    if([...select.options].some(option => option.value === previous)){
+        select.value = previous;
+    }else{
+        select.value = '';
+    }
+}
+
+function updateCustomerDropdowns(){
+    populateCustomerSelect('utangCustomerSelect');
+    populateCustomerSelect('customerNameSelect');
+    handleCustomerSelection('utang', false);
+    handleCustomerSelection('ledger', false);
+}
+
+function handleCustomerSelection(kind, focusInput=true){
+    const isUtang = kind === 'utang';
+    const select = document.getElementById(isUtang ? 'utangCustomerSelect' : 'customerNameSelect');
+    const input = document.getElementById(isUtang ? 'utangCustomerName' : 'customerName');
+    if(!select || !input) return;
+
+    const addingNew = select.value === '__new__';
+    input.style.display = addingNew ? '' : 'none';
+
+    if(!addingNew){
+        input.value = '';
+    }else if(focusInput){
+        input.focus();
+    }
+}
+
+function getSelectedCustomerName(kind){
+    const isUtang = kind === 'utang';
+    const select = document.getElementById(isUtang ? 'utangCustomerSelect' : 'customerNameSelect');
+    const input = document.getElementById(isUtang ? 'utangCustomerName' : 'customerName');
+    if(!select || !input) return '';
+
+    if(select.value && select.value !== '__new__') return select.value;
+    if(select.value !== '__new__') return '';
+
+    const typed = String(input.value || '').trim().replace(/\s+/g,' ');
+    if(!typed) return '';
+
+    const existing = getKnownCustomerNames().find(name =>
+        normalizeName(name) === normalizeName(typed)
+    );
+
+    if(existing){
+        select.value = existing;
+        input.value = '';
+        handleCustomerSelection(kind, false);
+        return existing;
+    }
+
+    return typed;
+}
+
+function resetCustomerSelection(kind){
+    const isUtang = kind === 'utang';
+    const select = document.getElementById(isUtang ? 'utangCustomerSelect' : 'customerNameSelect');
+    const input = document.getElementById(isUtang ? 'utangCustomerName' : 'customerName');
+    if(select) select.value = '';
+    if(input) input.value = '';
+    handleCustomerSelection(kind, false);
+}
+
 function toggleLargeText(){
 document.body.classList.toggle('large-text');
 localStorage.setItem('largeTextEnabled',document.body.classList.contains('large-text'));
@@ -374,6 +495,7 @@ async function loadLedger(){
 
     renderLedger();
     renderTopDebtors();
+    updateCustomerDropdowns();
 }
     async function loadDebtHistory(){
 
@@ -391,13 +513,12 @@ async function loadLedger(){
     debtHistory = data || [];
 
     renderDebtHistory();
+    updateCustomerDropdowns();
 }
 
 async function addDebt(){
 
-    const name =
-    document.getElementById('customerName')
-    .value.trim();
+    const name = getSelectedCustomerName('ledger');
 
     const amount =
     Number(
@@ -413,7 +534,7 @@ async function addDebt(){
 
     const existing =
     ledger.find(
-        x => x.customer_name === name
+        x => normalizeName(x.customer_name) === normalizeName(name)
     );
 
     if(existing){
@@ -465,14 +586,14 @@ async function addDebt(){
     ''
 );
 
+    document.getElementById('customerDebt').value='';
+    resetCustomerSelection('ledger');
     await loadLedger();
 }
 
 async function receivePayment(){
 
-    const name =
-    document.getElementById('customerName')
-    .value.trim();
+    const name = getSelectedCustomerName('ledger');
 
     const amount =
     Number(
@@ -488,7 +609,7 @@ async function receivePayment(){
 
     const existing =
     ledger.find(
-        x => x.customer_name === name
+        x => normalizeName(x.customer_name) === normalizeName(name)
     );
 
     if(!existing){
@@ -546,13 +667,77 @@ async function receivePayment(){
     ''
 );
 
+    document.getElementById('customerDebt').value='';
+    resetCustomerSelection('ledger');
     await loadLedger();
+}
+
+async function editLedgerCustomer(i){
+
+    const customer = ledger[i];
+    if(!customer) return;
+
+    const oldName = String(customer.customer_name || '').trim();
+    const typed = prompt('Edit customer name:', oldName);
+    if(typed === null) return;
+
+    const newName = String(typed).trim().replace(/\s+/g,' ');
+    if(!newName){
+        alert('Customer name cannot be blank.');
+        return;
+    }
+
+    if(normalizeName(newName) === normalizeName(oldName)) return;
+
+    const duplicate = ledger.find((x,index) =>
+        index !== i && normalizeName(x.customer_name) === normalizeName(newName)
+    );
+
+    if(duplicate){
+        alert('A customer with that name already exists. Use the existing customer instead.');
+        return;
+    }
+
+    if(!confirm(`Change customer name from "${oldName}" to "${newName}"?`)) return;
+
+    const { error } = await db
+      .from('pos_ledger')
+      .update({
+        customer_name:newName,
+        updated_at:new Date().toISOString()
+      })
+      .eq('id',customer.id);
+
+    if(error){
+      alert(error.message);
+      return;
+    }
+
+    const { error: historyError } = await db
+      .from('pos_debt_history')
+      .update({customer_name:newName})
+      .eq('customer_name',oldName);
+
+    if(historyError){
+      console.error(historyError);
+      alert('Customer was renamed in the ledger, but some old debt-history names could not be updated.');
+    }
+
+    await addHistory('Renamed customer: ' + oldName + ' → ' + newName);
+    await loadLedger();
+    await loadDebtHistory();
 }
 
 async function deleteLedger(i){
 
     const customer =
     ledger[i];
+
+    if(!customer) return;
+
+    if(!confirm(
+        `Are you sure you want to delete the utang record for "${customer.customer_name}"?\n\nThis will remove the outstanding debt record and cannot be undone.`
+    )) return;
 
     const { error } =
     await db
@@ -590,11 +775,18 @@ function renderLedger(){
         <td>${c.customer_name}</td>
         <td>₱${Number(c.outstanding_balance).toFixed(2)}</td>
         <td>
+        <div class="action-buttons">
+        <button
+        class="edit-btn"
+        onclick="editLedgerCustomer(${i})">
+        Edit
+        </button>
         <button
         class="delete-btn"
         onclick="deleteLedger(${i})">
         Delete
         </button>
+        </div>
         </td>
         </tr>`;
     });
@@ -703,6 +895,12 @@ async function deleteSupplier(i){
     const supplier =
     suppliers[i];
 
+    if(!supplier) return;
+
+    if(!confirm(
+        `Are you sure you want to delete supplier "${supplier.supplier_name}"?\n\nThis cannot be undone.`
+    )) return;
+
     const { error } =
     await db
     .from('pos_suppliers')
@@ -796,13 +994,14 @@ qtyInput.focus();
 function updatePaymentMethodUI(){
 const method=document.getElementById('paymentMethod')?.value||'Cash';
 const cashInput=document.getElementById('cashReceived');
-const utangInput=document.getElementById('utangCustomerName');
+const utangWrap=document.getElementById('utangCustomerWrap');
 const changeRow=document.getElementById('changeRow');
 
 const isUtang=method==='Utang';
 if(cashInput) cashInput.style.display=isUtang?'none':'';
-if(utangInput) utangInput.style.display=isUtang?'':'none';
+if(utangWrap) utangWrap.style.display=isUtang?'':'none';
 if(changeRow) changeRow.style.display=isUtang?'none':'';
+if(isUtang) updateCustomerDropdowns();
 
 renderCart();
 }
@@ -850,7 +1049,7 @@ alert('Cash received is less than the cart total.');
 return;
 }
 }else{
-customerName=document.getElementById('utangCustomerName')?.value.trim()||'';
+customerName=getSelectedCustomerName('utang');
 if(!customerName){
 alert('Enter the customer name for Utang.');
 return;
@@ -859,7 +1058,7 @@ return;
 showSaving();
 
 const existing=ledger.find(x =>
-String(x.customer_name||'').trim().toLowerCase()===customerName.toLowerCase()
+normalizeName(x.customer_name)===normalizeName(customerName)
 );
 
 if(existing){
@@ -921,9 +1120,8 @@ await addHistory(
 
 cart=[];
 const cashInput=document.getElementById('cashReceived');
-const utangInput=document.getElementById('utangCustomerName');
 if(cashInput) cashInput.value='';
-if(utangInput) utangInput.value='';
+resetCustomerSelection('utang');
 
 renderCart();
 renderInventory();
@@ -1055,45 +1253,161 @@ function renderHistory(){
     )
     .join('');
 }
-async function addProduct(){
+function updateProductDropdown(){
+    const select = document.getElementById('productSelector');
+    if(!select) return;
 
-    const p = product.value.trim();
+    const previous = select.value;
+    select.innerHTML = '<option value="__new__">+ Add New Product</option>';
 
-    if(!p || !price.value || !stock.value){
-        alert("Complete all fields");
-        return;
+    [...inventory]
+      .sort((a,b) => String(a.product || '').localeCompare(String(b.product || '')))
+      .forEach(item => {
+          const option = document.createElement('option');
+          option.value = String(item.id);
+          option.textContent = item.product;
+          select.appendChild(option);
+      });
+
+    if(previous && [...select.options].some(option => option.value === previous)){
+        select.value = previous;
+    }else{
+        select.value = '__new__';
     }
 
-    const { error } =
-    await db
-    .from('pos_inventory')
-    .insert([{
-        product:p,
-        category:category.value,
-        price:+price.value,
-        stock:+stock.value
-    }]);
-
-    if(error){
-        alert(error.message);
-        return;
-    }
-
-    product.value="";
-    price.value="";
-    stock.value="";
-
-    await addHistory(
-        'Added product: ' + p
-    );
-
-    await loadInventory();
+    handleProductSelection(false);
 }
 
-   
+function handleProductSelection(focusName=true){
+    const select = document.getElementById('productSelector');
+    const nameInput = document.getElementById('product');
+    const saveButton = document.getElementById('productSaveBtn');
+    if(!select || !nameInput || !saveButton) return;
+
+    if(select.value === '__new__'){
+        nameInput.value = '';
+        document.getElementById('category').selectedIndex = 0;
+        document.getElementById('price').value = '';
+        document.getElementById('stock').value = '';
+        saveButton.textContent = 'Add Product';
+        if(focusName) nameInput.focus();
+        return;
+    }
+
+    const item = inventory.find(x => String(x.id) === String(select.value));
+    if(!item){
+        select.value = '__new__';
+        handleProductSelection(focusName);
+        return;
+    }
+
+    nameInput.value = item.product || '';
+    document.getElementById('category').value = item.category || 'Others';
+    document.getElementById('price').value = item.price ?? '';
+    document.getElementById('stock').value = item.stock ?? '';
+    saveButton.textContent = 'Save Changes';
+}
+
+function editProduct(i){
+    const item = inventory[i];
+    if(!item) return;
+
+    const select = document.getElementById('productSelector');
+    if(!select) return;
+
+    select.value = String(item.id);
+    handleProductSelection(false);
+    document.getElementById('productEditor')?.scrollIntoView({behavior:'smooth',block:'center'});
+    document.getElementById('product')?.focus();
+}
+
+async function addProduct(){
+    const select = document.getElementById('productSelector');
+    const editingId = select && select.value !== '__new__' ? select.value : null;
+    const p = String(product.value || '').trim().replace(/\s+/g,' ');
+    const productPrice = Number(price.value);
+    const productStock = Number(stock.value);
+
+    if(!p || !Number.isFinite(productPrice) || productPrice < 0 || !Number.isFinite(productStock) || productStock < 0){
+        alert('Complete all fields with valid values.');
+        return;
+    }
+
+    const duplicate = inventory.find(item =>
+        normalizeName(item.product) === normalizeName(p) &&
+        String(item.id) !== String(editingId || '')
+    );
+
+    if(duplicate){
+        if(select){
+            select.value = String(duplicate.id);
+            handleProductSelection(false);
+        }
+        alert('That product already exists. The existing product was selected instead so a duplicate will not be created.');
+        return;
+    }
+
+    showSaving();
+
+    if(editingId){
+        const oldItem = inventory.find(item => String(item.id) === String(editingId));
+
+        const { error } = await db
+          .from('pos_inventory')
+          .update({
+              product:p,
+              category:category.value,
+              price:productPrice,
+              stock:productStock
+          })
+          .eq('id',editingId);
+
+        if(error){
+            showSaveError();
+            alert(error.message);
+            return;
+        }
+
+        await addHistory(
+            'Edited product: ' + (oldItem?.product || p) +
+            ' → ' + p +
+            ' | Price ₱' + productPrice.toFixed(2) +
+            ' | Stock ' + productStock
+        );
+    }else{
+        const { error } = await db
+          .from('pos_inventory')
+          .insert([{
+              product:p,
+              category:category.value,
+              price:productPrice,
+              stock:productStock
+          }]);
+
+        if(error){
+            showSaveError();
+            alert(error.message);
+            return;
+        }
+
+        await addHistory('Added product: ' + p);
+    }
+
+    await loadInventory();
+    if(select) select.value = '__new__';
+    handleProductSelection(false);
+    showSaved();
+}
+
 async function deleteProduct(i){
 
     const item = inventory[i];
+
+    if(!item) return;
+
+    if(!confirm(
+        `Are you sure you want to delete product "${item.product}"?\n\nThis cannot be undone.`
+    )) return;
 
     const { error } =
     await db
@@ -1113,35 +1427,24 @@ async function deleteProduct(i){
 
     await loadInventory();
 }
-function recordSale(){
-const i=saleProduct.value,q=+saleQty.value,item=inventory[i];
-if(!item||q<=0)return;
-if(item.stock<q)return alert('Not enough stock');
-item.stock-=q;
-profits[today]+=item.price*q;
-addHistory('Sold '+q+' x '+item.product);
-dailyProfit.innerText=profits[today].toFixed(2);
-saleQty.value='';
-renderInventory();
-}
-function updateSalesDropdown(){
-saleProduct.innerHTML='';
-inventory.forEach((x,i)=>saleProduct.innerHTML+=`<option value="${i}">${x.product}</option>`);
-}
+
 function renderInventory(){
 const s=(searchProduct.value||'').toLowerCase();
 inventoryBody.innerHTML='';
 inventory.forEach((x,i)=>{
 if(!x.product.toLowerCase().includes(s)&&!x.category.toLowerCase().includes(s)) return;
 inventoryBody.innerHTML+=`<tr class="${x.stock<=5?'low':''}">
-<td>${x.product}</td><td>${x.category}</td><td>₱${x.price}</td>
+<td>${x.product}</td><td>${x.category}</td><td>₱${Number(x.price).toFixed(2)}</td>
 <td>${x.stock}${x.stock<=5?' ⚠️':''}</td>
 <td>₱${(x.price*x.stock).toFixed(2)}</td>
-<td><button class="delete-btn" onclick="deleteProduct(${i})">Delete</button></td>
+<td><div class="action-buttons">
+<button class="edit-btn" onclick="editProduct(${i})">Edit</button>
+<button class="delete-btn" onclick="deleteProduct(${i})">Delete</button>
+</div></td>
 </tr>`;
 });
 inventoryValue.innerText=inventory.reduce((a,b)=>a+b.price*b.stock,0).toFixed(2);
-updateSalesDropdown();
+updateProductDropdown();
 updateCartDropdown();
 saveData();
 }
@@ -1155,7 +1458,7 @@ async function manualSave(){
 async function clearHistory(){
 
     if(!confirm(
-        'Delete all history?'
+        'Are you sure you want to delete ALL edit history? This cannot be undone.'
     )) return;
 
     const { error } =
@@ -1175,7 +1478,7 @@ async function clearHistory(){
 }
 
 function clearProfit(){
-if(!confirm('Reset today\'s profit?')) return;
+if(!confirm('Are you sure you want to reset today\'s profit to ₱0.00?')) return;
 profits[today]=0;
 dailyProfit.innerText='0.00';
 saveData();
@@ -1184,7 +1487,7 @@ addHistory('Profit Reset');
 
 async function clearInventory(){
 
-    if(!confirm('Delete all inventory items?'))
+    if(!confirm('Are you sure you want to delete ALL inventory items? This cannot be undone.'))
         return;
 
     const { error } =
@@ -1218,5 +1521,6 @@ renderTopDebtors();
 loadSuppliers();
 loadInventory();
 loadStoreNotes();
+updatePaymentMethodUI();
 </script>
-</body></html>            
+</body></html>
