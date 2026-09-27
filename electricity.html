@@ -124,10 +124,20 @@ td:first-child{
   font-size:13px;
   margin-left:auto;
 }
+.tenant-edit-toggle{
+  display:none;
+  min-width:145px !important;
+}
+.tenant-edit-toggle.visible{display:inline-flex}
+.tenant-edit-toggle.unlocked{
+  background:#dc2626;
+  color:#fff;
+}
 body.tenant-view-mode .actions{display:none}
 body.tenant-view-mode th.action-col,
 body.tenant-view-mode td.action-col{display:none}
 body.tenant-view-mode .proofFile{display:none !important}
+body.tenant-view-mode.tenant-edit-unlocked .proofFile{display:inline-block !important}
 body.tenant-view-mode .tenant-profile-link{
   pointer-events:none;
   text-decoration:none;
@@ -136,6 +146,11 @@ body.tenant-view-mode .tenant-profile-link{
 body.tenant-view-mode input:not([type=hidden]),
 body.tenant-view-mode select.status{
   opacity:.9;
+}
+body.tenant-view-mode.tenant-edit-unlocked input:not([type=hidden]),
+body.tenant-view-mode.tenant-edit-unlocked select.status{
+  opacity:1;
+  box-shadow:0 0 0 1px rgba(34,197,94,.55) inset;
 }
  
 @media(max-width:768px){
@@ -192,6 +207,8 @@ body.tenant-view-mode select.status{
     </select>
   </div>
 
+  <button id="toggleTenantEditBtn" class="tenant-edit-toggle" type="button" onclick="toggleTenantEditing()">🔓 Unlock Editing</button>
+
   <span id="tenantViewNote" class="tenant-view-note">Owner view — all tenants are visible.</span>
 </div>
 
@@ -217,6 +234,7 @@ let saveStatusTimer = null;
 let tenantProfilesCache = [];
 let trackerViewMode = 'all';
 let selectedTenantViewKey = '';
+let tenantEditUnlocked = false;
 
 function tenantRowViewKey(row){
   const tenantId = String(row?.dataset?.tenantId || '').trim();
@@ -254,10 +272,59 @@ function refreshTenantViewDropdown(){
   }
 }
 
+function setTenantEditingUnlocked(unlocked){
+  tenantEditUnlocked = Boolean(unlocked) && trackerViewMode === 'tenant' && Boolean(selectedTenantViewKey);
+  document.body.classList.toggle('tenant-edit-unlocked', tenantEditUnlocked);
+  updateTenantEditButton();
+}
+
+function updateTenantEditButton(){
+  const btn = document.getElementById('toggleTenantEditBtn');
+  if(!btn) return;
+
+  const canShow = trackerViewMode === 'tenant' && Boolean(selectedTenantViewKey);
+  btn.classList.toggle('visible', canShow);
+  btn.classList.toggle('unlocked', tenantEditUnlocked);
+  btn.textContent = tenantEditUnlocked ? '🔒 Lock Editing' : '🔓 Unlock Editing';
+  btn.title = tenantEditUnlocked
+    ? 'Save changes and lock editing for this tenant'
+    : 'Allow editing for the selected tenant only';
+}
+
+async function toggleTenantEditing(){
+  if(trackerViewMode !== 'tenant' || !selectedTenantViewKey){
+    alert('Select a tenant first.');
+    return;
+  }
+
+  if(!tenantEditUnlocked){
+    setTenantEditingUnlocked(true);
+    applyTrackerView();
+    return;
+  }
+
+  // Locking doubles as Save Changes so the owner does not need the hidden
+  // owner-only Save Data button while using Tenant View.
+  const ok = await saveMonth();
+  if(ok === false) return;
+
+  setTenantEditingUnlocked(false);
+  applyTrackerView();
+}
+
+function relockTenantEditing(){
+  if(tenantEditUnlocked){
+    setTenantEditingUnlocked(false);
+  }else{
+    updateTenantEditButton();
+  }
+}
+
 function setTrackerView(mode){
   trackerViewMode = mode === 'tenant' ? 'tenant' : 'all';
   const isTenant = trackerViewMode === 'tenant';
 
+  setTenantEditingUnlocked(false);
   document.body.classList.toggle('tenant-view-mode', isTenant);
   document.getElementById('viewAllBtn')?.classList.toggle('active-view', !isTenant);
   document.getElementById('viewTenantBtn')?.classList.toggle('active-view', isTenant);
@@ -276,11 +343,14 @@ function setTrackerView(mode){
     if(select) select.value = '';
   }
 
+  updateTenantEditButton();
   applyTrackerView();
 }
 
 function selectTenantView(value){
   selectedTenantViewKey = value || '';
+  setTenantEditingUnlocked(false);
+  updateTenantEditButton();
   applyTrackerView();
 }
 
@@ -303,7 +373,7 @@ function applyTrackerView(){
       const key = tenantRowViewKey(row);
       const visible = Boolean(selectedTenantViewKey) && key === selectedTenantViewKey;
       row.style.display = visible ? '' : 'none';
-      setRowTenantReadOnly(row, true);
+      setRowTenantReadOnly(row, !tenantEditUnlocked);
     }else{
       const tenantName = String(row.querySelector('.name')?.value || '').toLowerCase();
       row.style.display = tenantName.includes(search) ? '' : 'none';
@@ -319,9 +389,13 @@ function applyTrackerView(){
     }else{
       const selected = document.getElementById('tenantViewSelect');
       const label = selected?.options[selected.selectedIndex]?.text || 'Selected tenant';
-      note.textContent = `Tenant view — only ${label} is visible. Editing is locked.`;
+      note.textContent = tenantEditUnlocked
+        ? `Tenant view — only ${label} is visible. Editing is UNLOCKED. Press Lock Editing to save and lock.`
+        : `Tenant view — only ${label} is visible. Editing is locked.`;
     }
   }
+
+  updateTenantEditButton();
 }
 
 function setSaveStatus(text, state='normal'){
@@ -387,6 +461,7 @@ function initMonths(){
 monthSelect.onchange = async () => {
 
    await saveMonth();
+   relockTenantEditing();
 
    await loadMonth();
 
@@ -1182,6 +1257,7 @@ function importBackup(e){
 async function prevMonth(){
  if(monthSelect.selectedIndex>0){
    await saveMonth();
+   relockTenantEditing();
    monthSelect.selectedIndex--;
   await loadMonth();
 await saveCurrentMonthToSupabase(); }
@@ -1190,6 +1266,7 @@ await saveCurrentMonthToSupabase(); }
 async function nextMonth(){
  if(monthSelect.selectedIndex<monthSelect.options.length-1){
    await saveMonth();
+   relockTenantEditing();
    monthSelect.selectedIndex++;
   await loadMonth();
 await saveCurrentMonthToSupabase(); }
