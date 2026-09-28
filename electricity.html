@@ -263,7 +263,6 @@ body.tenant-view-mode .tenant-image-history.visible{display:block}
 <div class="actions" style="margin-top:10px">
 <button onclick="addTenant()">Add Tenant</button>
 <a class="btn-link" href="tenants.html">👥 Tenant Information</a>
-<button onclick="openCopyMonthModal()">📋 Copy From Month</button>
 <button onclick="reflectForward()" title="Save this month and reflect carry-forward changes to all later months">🔄 Reflect</button>
 <button onclick="saveMonth()">Save Data</button>
 <button onclick="exportBackup()">💾 Export Backup (JSON)</button>
@@ -337,7 +336,13 @@ body.tenant-view-mode .tenant-image-history.visible{display:block}
 </div>
 
 <div id="trackerTableSection">
-<h2>Electricity Tracker</h2>
+<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+  <h2 style="margin:0">Electricity Tracker</h2>
+  <div style="display:flex;align-items:center;gap:8px;background:#21113a;border:1px solid #8B5CF6;border-radius:12px;padding:8px 12px;font-weight:800">
+    <span style="color:#c4b5fd">Overall Total Bill:</span>
+    <span id="overallTotalBill" style="font-size:20px;color:#fff">₱0.00</span>
+  </div>
+</div>
 <div class="tracker-table-wrap">
 <table>
 <thead>
@@ -723,6 +728,7 @@ function applyTrackerView(){
   }
 
   updateTenantEditButton();
+  updateOverallTotalBill();
 }
 
 function setSaveStatus(text, state='normal'){
@@ -2001,6 +2007,39 @@ function addTenantRow(t){
  calc(tr.querySelector('.curr'));
 }
 
+function getRowBillTotal(r){
+  if(!r) return 0;
+
+  const p = Number(r.querySelector('.prev')?.value || 0);
+  const c = Number(r.querySelector('.curr')?.value || 0);
+  const pr = Number(r.querySelector('.price')?.value || 0);
+  const used = Math.max(0, c - p);
+  const usedRounded = Math.round((used + Number.EPSILON) * 100) / 100;
+  const energyCharge = usedRounded * pr;
+  const otherCharges = sumOtherCharges(getRowOtherCharges(r));
+
+  return energyCharge + otherCharges;
+}
+
+function updateOverallTotalBill(){
+  const el = document.getElementById('overallTotalBill');
+  if(!el) return;
+
+  let rows = [...tenantBody.rows];
+
+  // In Tenant View, never total hidden tenants. This keeps the tenant-facing
+  // screen private and shows only the selected tenant's bill.
+  if(trackerViewMode === 'tenant') {
+    rows = rows.filter(row => tenantRowViewKey(row) === selectedTenantViewKey);
+  }
+
+  const total = rows.reduce((sum, row) => sum + getRowBillTotal(row), 0);
+  el.textContent = '₱' + total.toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
 function calc(el){
  let r=el.closest('tr');
  let p=+r.querySelector('.prev').value||0;
@@ -2016,6 +2055,7 @@ function calc(el){
  const energyCharge = usedRounded * pr;
  const otherCharges = sumOtherCharges(getRowOtherCharges(r));
  r.querySelector('.total').innerText='₱'+(energyCharge+otherCharges).toFixed(2);
+ updateOverallTotalBill();
 }
 
 function statusColor(s){s.className='status '+(s.value==='Paid'?'paid':'unpaid');}
