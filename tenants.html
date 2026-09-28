@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>424 Tenant Information</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
 <style>
 :root{
   --bg:#071F44;
@@ -100,7 +102,19 @@ tr:hover td{background:rgba(255,255,255,.025)}
 .room-status.reserved{background:rgba(245,158,11,.18);color:#fcd34d}
 .room-status.maintenance{background:rgba(220,38,38,.18);color:#fca5a5}
 .nickname-link{background:none;border:none;padding:0;color:#ddd6fe;text-decoration:underline;text-underline-offset:3px;font-weight:800;cursor:pointer}
-.nickname-link:hover{color:#fff;filter:none}
+ .nickname-link:hover{color:#fff;filter:none}
+.tag-list{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.tag-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:rgba(139,92,246,.17);border:1px solid rgba(196,181,253,.28);color:#ddd6fe;font-size:11px;font-weight:800}
+.tag-chip button{background:none;border:0;padding:0 2px;color:#fca5a5;font-size:12px;line-height:1;min-width:auto}
+.section-card{border:1px solid rgba(196,181,253,.16);border-radius:12px;padding:11px;margin:10px 0;background:rgba(139,92,246,.055)}
+.section-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.section-card-title{font-weight:900;color:#ddd6fe}
+.transfer-list{display:grid;gap:8px}
+.transfer-item{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.02)}
+.transfer-route{font-weight:800;color:#e9e3ff}
+.transfer-meta{font-size:12px;color:var(--muted);margin-top:4px}
+.quick-actions{display:flex;gap:5px;flex-wrap:wrap;min-width:230px}
+.quick-actions button{padding:6px 8px;font-size:11px}
 @media(max-width:800px){
   body{padding:10px}
   .stats{grid-template-columns:1fr}
@@ -171,7 +185,8 @@ tr:hover td{background:rgba(255,255,255,.025)}
           <th>Contact</th>
           <th>Status</th>
           <th>Move-in</th>
-          <th>Actions</th>
+          <th>Tags</th>
+          <th>Quick Actions</th>
         </tr>
       </thead>
       <tbody id="tenantTableBody"></tbody>
@@ -236,7 +251,7 @@ tr:hover td{background:rgba(255,255,255,.025)}
         </div>
         <div class="field">
           <label>Applies To</label>
-          <select id="questionScope">
+          <select id="questionScope" onchange="populateQuestionSectionOptions()">
             <option value="tenant">This Tenant Only</option>
             <option value="all">All Tenants</option>
           </select>
@@ -250,6 +265,10 @@ tr:hover td{background:rgba(255,255,255,.025)}
             <option value="yes_no">Yes / No</option>
             <option value="textarea">Long Notes</option>
           </select>
+        </div>
+        <div class="field full">
+          <label>Section</label>
+          <select id="questionSection"><option value="">General / No Section</option></select>
         </div>
       </div>
     </div>
@@ -270,6 +289,7 @@ tr:hover td{background:rgba(255,255,255,.025)}
     <div class="modal-body">
       <div class="actions" style="margin-bottom:12px">
         <button onclick="openQuestionModal(null,null,'all')">➕ Add Question</button>
+        <button class="secondary" onclick="addCustomSection('all',null)">➕ Add Section</button>
       </div>
       <div id="globalQuestionsList"></div>
     </div>
@@ -319,6 +339,30 @@ tr:hover td{background:rgba(255,255,255,.025)}
   </div>
 </div>
 
+<!-- Room Transfer History modal -->
+<div class="modal" id="transferModal" onclick="closeOnBackdrop(event,'transferModal')">
+  <div class="modal-card" style="width:min(700px,100%)">
+    <div class="modal-head">
+      <h2 id="transferModalTitle">Add Room Transfer</h2>
+      <button class="secondary small" onclick="closeTransferModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid">
+        <div class="field"><label>From Room / Unit</label><input id="transferFromRoom"></div>
+        <div class="field"><label>From Floor / Building</label><input id="transferFromBuilding"></div>
+        <div class="field"><label>To Room / Unit</label><input id="transferToRoom"></div>
+        <div class="field"><label>To Floor / Building</label><input id="transferToBuilding"></div>
+        <div class="field"><label>Transfer Date / Time</label><input id="transferDate" type="datetime-local"></div>
+        <div class="field full"><label>Notes</label><textarea id="transferNotes" placeholder="Optional notes"></textarea></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="secondary" onclick="closeTransferModal()">Cancel</button>
+      <button onclick="saveTransferRecord()">💾 Save Transfer</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const SUPABASE_URL='https://carodzdpubzulokuvefl.supabase.co';
 const SUPABASE_KEY='sb_publishable_cnRdXcQn3gTlYYVlRe8heg_P6tucIyP';
@@ -332,11 +376,16 @@ let currentQuestions=[];
 let currentAnswers={};
 let currentAttachments=[];
 let currentOtherInfo=[];
+let currentTags=[];
+let currentSections=[];
+let currentRoomTransfers=[];
 let rooms=[];
 let editingOtherInfoId=null;
 let editingRoomId=null;
 let editingQuestionId=null;
 let questionTenantContext=null;
+let pendingQuestionSectionId=null;
+let editingTransferId=null;
 let saveStatusTimer=null;
 
 function escapeHtml(value){
@@ -371,16 +420,21 @@ function showStatus(text,error=false){
 function closeOnBackdrop(event,id){ if(event.target.id===id) document.getElementById(id).classList.remove('open'); }
 
 async function loadTenants(){
-  const {data,error}=await supabaseClient
-    .from('tenant_profiles')
-    .select('*')
-    .order('nickname',{ascending:true});
-  if(error){
-    console.error(error);
-    alert('Could not load tenant profiles. Make sure you ran the Tenant Information SQL first.\n\n'+error.message);
+  const [profilesRes,tagsRes]=await Promise.all([
+    supabaseClient.from('tenant_profiles').select('*').order('nickname',{ascending:true}),
+    supabaseClient.from('tenant_tags').select('*').order('created_at',{ascending:true})
+  ]);
+  if(profilesRes.error){
+    console.error(profilesRes.error);
+    alert('Could not load tenant profiles. Make sure you ran the Tenant Information SQL first.\n\n'+profilesRes.error.message);
     return;
   }
-  tenants=data||[];
+  if(tagsRes.error) console.error('Tenant tags load failed:',tagsRes.error);
+  const tags=tagsRes.data||[];
+  tenants=(profilesRes.data||[]).map(t=>({
+    ...t,
+    tags:tags.filter(x=>x.tenant_id===t.id)
+  }));
   renderTenantTable();
   updateStats();
 }
@@ -396,12 +450,13 @@ function renderTenantTable(){
   const q=(document.getElementById('searchInput').value||'').toLowerCase().trim();
   const status=document.getElementById('statusFilter').value;
   const filtered=tenants.filter(t=>{
-    const hay=[t.nickname,t.full_name,t.unit_room,t.floor_building,t.contact_number,t.email].join(' ').toLowerCase();
+    const tagText=(t.tags||[]).map(x=>x.tag).join(' ');
+    const hay=[t.nickname,t.full_name,t.unit_room,t.floor_building,t.contact_number,t.email,tagText].join(' ').toLowerCase();
     return (!q || hay.includes(q)) && (status==='All' || t.status===status);
   });
 
   if(!filtered.length){
-    body.innerHTML=`<tr><td colspan="7" class="empty">No tenants found.</td></tr>`;
+    body.innerHTML=`<tr><td colspan="8" class="empty">No tenants found.</td></tr>`;
     return;
   }
 
@@ -413,11 +468,14 @@ function renderTenantTable(){
       <td>${escapeHtml(t.contact_number||'—')}</td>
       <td>${statusBadge(t.status)}</td>
       <td>${escapeHtml(fmtDate(t.move_in_date)||'—')}</td>
+      <td>${renderTagChips(t.tags||[],true)}</td>
       <td>
-        <div class="actions" style="gap:6px">
-          <button class="small secondary" onclick="openTenantModal('view','${t.id}')">View</button>
-          <button class="small" onclick="openTenantModal('edit','${t.id}')">Edit</button>
-          <button class="small danger" onclick="deleteTenant('${t.id}')">Delete</button>
+        <div class="quick-actions">
+          <button class="secondary" onclick="openTenantModal('view','${t.id}')">View</button>
+          <button onclick="openTenantModal('edit','${t.id}')">Edit</button>
+          <button class="secondary" onclick="exportTenantPdf('${t.id}')">PDF</button>
+          <button class="secondary" onclick="quickRoomAction('${t.id}')">Room</button>
+          <button class="danger" onclick="deleteTenant('${t.id}')">Delete</button>
         </div>
       </td>
     </tr>
@@ -441,6 +499,9 @@ async function openTenantModal(mode,id=null){
   currentAnswers={};
   currentAttachments=[];
   currentOtherInfo=[];
+  currentTags=[];
+  currentSections=[];
+  currentRoomTransfers=[];
 
   let tenant=blankTenant();
   if(id){
@@ -460,20 +521,23 @@ async function openTenantModal(mode,id=null){
 }
 
 async function loadTenantExtras(tenantId){
-  const [qRes,aRes,attRes,infoRes]=await Promise.all([
+  const [qRes,aRes,attRes,infoRes,tagsRes,sectionsRes,transferRes]=await Promise.all([
     supabaseClient.from('tenant_questions').select('*').or(`scope.eq.all,tenant_id.eq.${tenantId}`).order('sort_order').order('created_at'),
     supabaseClient.from('tenant_answers').select('*').eq('tenant_id',tenantId),
     supabaseClient.from('tenant_attachments').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:false}),
-    supabaseClient.from('tenant_other_information').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:true})
+    supabaseClient.from('tenant_other_information').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:true}),
+    supabaseClient.from('tenant_tags').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:true}),
+    supabaseClient.from('tenant_custom_sections').select('*').or(`scope.eq.all,tenant_id.eq.${tenantId}`).order('sort_order').order('created_at'),
+    supabaseClient.from('tenant_room_transfers').select('*').eq('tenant_id',tenantId).order('transferred_at',{ascending:false})
   ]);
-  if(qRes.error) console.error(qRes.error);
-  if(aRes.error) console.error(aRes.error);
-  if(attRes.error) console.error(attRes.error);
-  if(infoRes.error) console.error(infoRes.error);
+  for(const r of [qRes,aRes,attRes,infoRes,tagsRes,sectionsRes,transferRes]) if(r.error) console.error(r.error);
   currentQuestions=qRes.data||[];
   currentAnswers=Object.fromEntries((aRes.data||[]).map(a=>[a.question_id,a.answer_value??'']));
   currentAttachments=attRes.data||[];
   currentOtherInfo=infoRes.data||[];
+  currentTags=tagsRes.data||[];
+  currentSections=sectionsRes.data||[];
+  currentRoomTransfers=transferRes.data||[];
 }
 
 function renderTenantFooter(mode,id){
@@ -526,6 +590,12 @@ function renderEditForm(t){
     </div>
 
     <div class="section">
+      <div class="section-title"><h3>Tenant Tags</h3>${t.id?`<button type="button" class="small" onclick="addTenantTag()">➕ Add Tag</button>`:''}</div>
+      ${!t.id?'<div class="notice">Save this tenant first before adding tags.</div>':''}
+      <div id="tenantTagsEdit" class="tag-list">${renderTagChips(currentTags,false)}</div>
+    </div>
+
+    <div class="section">
       <div class="section-title"><h3>Emergency Contact</h3></div>
       <div class="grid three">
         ${field('Contact Name','emergency_contact_name',t.emergency_contact_name)}
@@ -558,10 +628,18 @@ function renderEditForm(t){
     <div class="section">
       <div class="section-title">
         <h3>Custom Information</h3>
-        <button type="button" class="small" onclick="openQuestionModal(null,'${t.id||''}','tenant')">➕ Add Question</button>
+        <div class="actions" style="gap:6px">
+          <button type="button" class="small" onclick="openQuestionModal(null,'${t.id||''}','tenant')">➕ Add Question</button>
+          ${t.id?`<button type="button" class="small secondary" onclick="addCustomSection('tenant','${t.id}')">➕ Add Section</button>`:''}
+        </div>
       </div>
       ${!t.id?'<div class="notice">Save this tenant first before adding tenant-only questions. Questions for all tenants can still be created from Manage Questions on the main page.</div>':''}
       <div id="customQuestionsEditor"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><h3>Room Transfer History</h3>${t.id?`<button type="button" class="small" onclick="openTransferModal()">➕ Add Record</button>`:''}</div>
+      ${t.id?`<div id="roomTransferEdit" class="transfer-list">${renderRoomTransfers(false)}</div>`:'<div class="notice">Save this tenant first before adding room transfer history.</div>'}
     </div>
 
     <div class="section">
@@ -604,6 +682,11 @@ function renderView(t){
     </div>
 
     <div class="section">
+      <div class="section-title"><h3>Tenant Tags</h3><button type="button" class="small" onclick="addTenantTag()">➕ Add Tag</button></div>
+      <div id="tenantTagsView" class="tag-list">${renderTagChips(currentTags,false)}</div>
+    </div>
+
+    <div class="section">
       <div class="section-title"><h3>Emergency Contact</h3></div>
       <div class="grid three">
         ${readBox('Contact Name',t.emergency_contact_name)}
@@ -633,8 +716,13 @@ function renderView(t){
     </div>
 
     <div class="section">
-      <div class="section-title"><h3>Custom Information</h3></div>
+      <div class="section-title"><h3>Custom Information</h3><button type="button" class="small secondary" onclick="addCustomSection('tenant','${t.id}')">➕ Add Section</button></div>
       <div id="customQuestionsView"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title"><h3>Room Transfer History</h3><button type="button" class="small" onclick="openTransferModal()">➕ Add Record</button></div>
+      <div id="roomTransferView" class="transfer-list">${renderRoomTransfers(false)}</div>
     </div>
 
     <div class="section">
@@ -646,12 +734,50 @@ function renderView(t){
 
 function renderViewExtras(){
   const qBox=document.getElementById('customQuestionsView');
-  qBox.innerHTML=currentQuestions.length ? currentQuestions.map(q=>`
-    <div class="field" style="margin-bottom:10px">
-      <label>${escapeHtml(q.question)} ${q.scope==='all'?'<span style="color:#a78bfa">• All Tenants</span>':''}</label>
-      <div class="read-value">${escapeHtml(currentAnswers[q.id]||'—')}</div>
-    </div>`).join('') : '<div class="empty">No custom information.</div>';
-  document.getElementById('attachmentListView').innerHTML=renderAttachments(true);
+  if(qBox) qBox.innerHTML=renderQuestionsGrouped(true);
+  const att=document.getElementById('attachmentListView');
+  if(att) att.innerHTML=renderAttachments(true);
+}
+
+function sectionNameById(id){
+  if(!id) return 'General';
+  return currentSections.find(s=>s.id===id)?.section_name||'General';
+}
+
+function renderQuestionsGrouped(viewOnly=false){
+  if(!currentQuestions.length && !currentSections.length) return '<div class="empty">No custom information.</div>';
+  const groups=[];
+  const general=currentQuestions.filter(q=>!q.section_id);
+  if(general.length) groups.push({section:null,name:'General',questions:general});
+  for(const sec of currentSections){
+    groups.push({section:sec,name:sec.section_name,questions:currentQuestions.filter(q=>q.section_id===sec.id)});
+  }
+  if(!groups.length) return '<div class="empty">No custom information.</div>';
+  return groups.map(g=>`
+    <div class="section-card">
+      <div class="section-card-head">
+        <div class="section-card-title">${escapeHtml(g.name)}</div>
+        ${viewOnly?'':g.section?`<div class="custom-actions">
+          <button type="button" class="small" onclick="openQuestionModal(null,'${currentTenantId||''}','${g.section.scope}','${g.section.id}')">➕ Question</button>
+          ${g.section.scope==='tenant'?`<button type="button" class="small secondary" onclick="editCustomSection('${g.section.id}')">Edit Section</button><button type="button" class="small danger" onclick="deleteCustomSection('${g.section.id}')">Delete Section</button>`:''}
+        </div>`:''}
+      </div>
+      ${g.questions.length?g.questions.map(q=>viewOnly?`
+        <div class="field" style="margin-bottom:10px">
+          <label>${escapeHtml(q.question)} ${q.scope==='all'?'<span style="color:#a78bfa">• All Tenants</span>':''}</label>
+          <div class="read-value">${escapeHtml(currentAnswers[q.id]||'—')}</div>
+        </div>`:`
+        <div class="custom-row">
+          <div class="field">
+            <label>${escapeHtml(q.question)} ${q.scope==='all'?'<span style="color:#a78bfa">• All Tenants</span>':''}</label>
+            ${questionInput(q,currentAnswers[q.id]||'')}
+          </div>
+          <div class="custom-actions">
+            <button type="button" class="small secondary" onclick="openQuestionModal('${q.id}','${currentTenantId||''}','${q.scope}')">Edit</button>
+            <button type="button" class="small danger" onclick="deleteQuestion('${q.id}')">Delete</button>
+          </div>
+        </div>`).join(''):'<div class="empty">No questions in this section.</div>'}
+    </div>`).join('');
 }
 
 function questionInput(q,value){
@@ -665,18 +791,43 @@ function questionInput(q,value){
 function renderCustomQuestionsEditor(){
   const box=document.getElementById('customQuestionsEditor');
   if(!box) return;
-  if(!currentQuestions.length){ box.innerHTML='<div class="empty">No custom questions yet.</div>'; return; }
-  box.innerHTML=currentQuestions.map(q=>`
-    <div class="custom-row">
-      <div class="field">
-        <label>${escapeHtml(q.question)} ${q.scope==='all'?'<span style="color:#a78bfa">• All Tenants</span>':''}</label>
-        ${questionInput(q,currentAnswers[q.id]||'')}
-      </div>
-      <div class="custom-actions">
-        <button type="button" class="small secondary" onclick="openQuestionModal('${q.id}','${currentTenantId||''}','${q.scope}')">Edit</button>
-        <button type="button" class="small danger" onclick="deleteQuestion('${q.id}')">Delete</button>
-      </div>
-    </div>`).join('');
+  box.innerHTML=renderQuestionsGrouped(false);
+}
+
+function renderTagChips(tags,compact=false){
+  if(!tags?.length) return compact?'<span style="color:#94a3b8">—</span>':'<span style="color:#94a3b8;font-size:12px">No tags added.</span>';
+  return tags.map(tag=>`<span class="tag-chip">${escapeHtml(tag.tag)}${compact?'':`<button type="button" title="Edit tag" onclick="editTenantTag('${tag.id}')">✎</button><button type="button" title="Delete tag" onclick="deleteTenantTag('${tag.id}')">×</button>`}</span>`).join('');
+}
+function refreshTagLists(){
+  const edit=document.getElementById('tenantTagsEdit');
+  const view=document.getElementById('tenantTagsView');
+  if(edit) edit.innerHTML=renderTagChips(currentTags,false);
+  if(view) view.innerHTML=renderTagChips(currentTags,false);
+  const t=tenants.find(x=>x.id===currentTenantId); if(t) t.tags=[...currentTags];
+  renderTenantTable();
+}
+async function addTenantTag(){
+  if(!currentTenantId){alert('Save the tenant first before adding tags.');return;}
+  const tag=prompt('Tag name (example: Long-term, With Vehicle, Family):','');
+  if(tag===null||!tag.trim()) return;
+  const {error}=await supabaseClient.from('tenant_tags').insert({tenant_id:currentTenantId,tag:tag.trim()});
+  if(error){ if(error.code==='23505') alert('That tag already exists for this tenant.'); else alert(error.message); return; }
+  const {data}=await supabaseClient.from('tenant_tags').select('*').eq('tenant_id',currentTenantId).order('created_at');
+  currentTags=data||[]; refreshTagLists(); showStatus('✓ Tag added');
+}
+async function editTenantTag(id){
+  const item=currentTags.find(x=>x.id===id); if(!item) return;
+  const tag=prompt('Edit tag:',item.tag); if(tag===null||!tag.trim()) return;
+  const {error}=await supabaseClient.from('tenant_tags').update({tag:tag.trim()}).eq('id',id);
+  if(error){alert(error.message);return;}
+  item.tag=tag.trim(); refreshTagLists(); showStatus('✓ Tag updated');
+}
+async function deleteTenantTag(id){
+  const item=currentTags.find(x=>x.id===id); if(!item) return;
+  if(!confirm(`Delete tag "${item.tag}"?`)) return;
+  const {error}=await supabaseClient.from('tenant_tags').delete().eq('id',id);
+  if(error){alert(error.message);return;}
+  currentTags=currentTags.filter(x=>x.id!==id); refreshTagLists(); showStatus('✓ Tag deleted');
 }
 
 function renderOtherInfo(viewOnly){
@@ -698,7 +849,7 @@ function refreshOtherInfoLists(){
   const edit=document.getElementById('otherInfoListEdit');
   const view=document.getElementById('otherInfoListView');
   if(edit) edit.innerHTML=renderOtherInfo(false);
-  if(view) view.innerHTML=renderOtherInfo(true);
+  if(view) view.innerHTML=renderOtherInfo(false);
 }
 
 function openOtherInfoModal(id=null){
@@ -735,6 +886,59 @@ async function deleteOtherInfo(id){
   await loadTenantExtras(currentTenantId);
   refreshOtherInfoLists();
   showStatus('✓ Information deleted');
+}
+
+function renderRoomTransfers(viewOnly=false){
+  if(!currentRoomTransfers.length) return '<div class="empty">No room transfer history.</div>';
+  return currentRoomTransfers.map(x=>{
+    const from=[x.from_unit_name,x.from_floor_building].filter(Boolean).join(' — ')||'Unassigned';
+    const to=[x.to_unit_name,x.to_floor_building].filter(Boolean).join(' — ')||'Unassigned';
+    const d=x.transferred_at?new Date(x.transferred_at).toLocaleString('en-PH'):'—';
+    return `<div class="transfer-item"><div><div class="transfer-route">${escapeHtml(from)} → ${escapeHtml(to)}</div><div class="transfer-meta">${escapeHtml(d)}${x.notes?` • ${escapeHtml(x.notes)}`:''}</div></div>${viewOnly?'':`<div class="custom-actions"><button type="button" class="small" onclick="openTransferModal('${x.id}')">Edit</button><button type="button" class="small danger" onclick="deleteTransferRecord('${x.id}')">Delete</button></div>`}</div>`;
+  }).join('');
+}
+function refreshTransferLists(){
+  const e=document.getElementById('roomTransferEdit'); const v=document.getElementById('roomTransferView');
+  if(e) e.innerHTML=renderRoomTransfers(false); if(v) v.innerHTML=renderRoomTransfers(false);
+}
+function toDateTimeLocal(value){
+  const d=value?new Date(value):new Date();
+  const off=d.getTimezoneOffset(); const local=new Date(d.getTime()-off*60000);
+  return local.toISOString().slice(0,16);
+}
+function openTransferModal(id=null){
+  if(!currentTenantId){alert('Open a saved tenant first.');return;}
+  editingTransferId=id;
+  const x=id?currentRoomTransfers.find(r=>r.id===id):null;
+  document.getElementById('transferModalTitle').textContent=x?'✏️ Edit Room Transfer':'➕ Add Room Transfer';
+  document.getElementById('transferFromRoom').value=x?.from_unit_name||'';
+  document.getElementById('transferFromBuilding').value=x?.from_floor_building||'';
+  document.getElementById('transferToRoom').value=x?.to_unit_name||'';
+  document.getElementById('transferToBuilding').value=x?.to_floor_building||'';
+  document.getElementById('transferDate').value=toDateTimeLocal(x?.transferred_at);
+  document.getElementById('transferNotes').value=x?.notes||'';
+  document.getElementById('transferModal').classList.add('open');
+}
+function closeTransferModal(){document.getElementById('transferModal').classList.remove('open');editingTransferId=null;}
+async function saveTransferRecord(){
+  const raw=document.getElementById('transferDate').value;
+  const payload={tenant_id:currentTenantId,from_unit_name:document.getElementById('transferFromRoom').value.trim()||null,from_floor_building:document.getElementById('transferFromBuilding').value.trim()||null,to_unit_name:document.getElementById('transferToRoom').value.trim()||null,to_floor_building:document.getElementById('transferToBuilding').value.trim()||null,transferred_at:raw?new Date(raw).toISOString():new Date().toISOString(),notes:document.getElementById('transferNotes').value.trim()||null};
+  const res=editingTransferId?await supabaseClient.from('tenant_room_transfers').update(payload).eq('id',editingTransferId):await supabaseClient.from('tenant_room_transfers').insert(payload);
+  if(res.error){alert(res.error.message);return;}
+  closeTransferModal(); await loadTenantExtras(currentTenantId); refreshTransferLists(); showStatus('✓ Transfer history saved');
+}
+async function deleteTransferRecord(id){
+  const x=currentRoomTransfers.find(r=>r.id===id); if(!x) return;
+  if(!confirm('Delete this room transfer history record?')) return;
+  const {error}=await supabaseClient.from('tenant_room_transfers').delete().eq('id',id); if(error){alert(error.message);return;}
+  currentRoomTransfers=currentRoomTransfers.filter(r=>r.id!==id); refreshTransferLists(); showStatus('✓ Transfer history deleted');
+}
+async function logRoomTransfer(tenantId,fromRoom,fromBuilding,toRoom,toBuilding,notes='Automatic room assignment change'){
+  if(!tenantId) return;
+  const norm=v=>String(v||'').trim().toLowerCase();
+  if(norm(fromRoom)===norm(toRoom) && norm(fromBuilding)===norm(toBuilding)) return;
+  const {error}=await supabaseClient.from('tenant_room_transfers').insert({tenant_id:tenantId,from_unit_name:fromRoom||null,from_floor_building:fromBuilding||null,to_unit_name:toRoom||null,to_floor_building:toBuilding||null,notes});
+  if(error) console.error('Room transfer log failed:',error);
 }
 
 function renderAttachments(viewOnly){
@@ -787,6 +991,7 @@ async function saveTenant(){
   showStatus('Saving...');
 
   let tenantId=currentTenantId;
+  const oldTenant=currentTenantId?tenants.find(t=>t.id===currentTenantId):null;
   let result;
   if(currentMode==='new'){
     result=await supabaseClient.from('tenant_profiles').insert(payload).select('*').single();
@@ -803,6 +1008,12 @@ async function saveTenant(){
   }
 
   tenantId=result.data.id;
+
+  if(oldTenant && (String(oldTenant.unit_room||'')!==String(payload.unit_room||'') || String(oldTenant.floor_building||'')!==String(payload.floor_building||''))){
+    await logRoomTransfer(tenantId,oldTenant.unit_room,oldTenant.floor_building,payload.unit_room,payload.floor_building,'Tenant profile room field changed');
+  }else if(currentMode==='new' && (payload.unit_room||payload.floor_building)){
+    await logRoomTransfer(tenantId,null,null,payload.unit_room,payload.floor_building,'Initial room assignment');
+  }
 
   const photoInput=document.getElementById('photoFile');
   if(photoInput?.files?.[0]){
@@ -921,38 +1132,54 @@ async function deleteAttachment(id){
 
 function closeTenantModal(){ document.getElementById('tenantModal').classList.remove('open'); }
 
-async function openQuestionModal(questionId=null,tenantId=null,forcedScope=null){
+async function openQuestionModal(questionId=null,tenantId=null,forcedScope=null,forcedSectionId=null){
   editingQuestionId=questionId;
   questionTenantContext=tenantId||currentTenantId||null;
+  pendingQuestionSectionId=forcedSectionId||null;
   let q=null;
   if(questionId){
     q=currentQuestions.find(x=>x.id===questionId);
-    if(!q){
-      const res=await supabaseClient.from('tenant_questions').select('*').eq('id',questionId).single();
-      q=res.data;
-    }
+    if(!q){ const res=await supabaseClient.from('tenant_questions').select('*').eq('id',questionId).single(); q=res.data; }
+  }
+  const desiredScope=q?.scope||forcedScope||((questionTenantContext)?'tenant':'all');
+  if(desiredScope==='all' && !currentSections.some(x=>x.scope==='all')){
+    const {data}=await supabaseClient.from('tenant_custom_sections').select('*').eq('scope','all').order('sort_order').order('created_at');
+    const tenantSecs=currentSections.filter(x=>x.scope==='tenant');
+    currentSections=[...tenantSecs,...(data||[])];
+  }
+  if(desiredScope==='tenant' && questionTenantContext && !currentSections.some(x=>x.scope==='tenant'&&x.tenant_id===questionTenantContext)){
+    const {data}=await supabaseClient.from('tenant_custom_sections').select('*').eq('scope','tenant').eq('tenant_id',questionTenantContext).order('sort_order').order('created_at');
+    const globalSecs=currentSections.filter(x=>x.scope==='all');
+    currentSections=[...globalSecs,...(data||[])];
   }
   document.getElementById('questionModalTitle').textContent=q?'Edit Question':'Add Question';
   document.getElementById('questionText').value=q?.question||'';
   document.getElementById('questionType').value=q?.field_type||'text';
   document.getElementById('questionScope').value=q?.scope||forcedScope||'tenant';
   document.getElementById('questionScope').disabled=Boolean(q);
-
-  if(!q && !questionTenantContext && document.getElementById('questionScope').value==='tenant'){
-    document.getElementById('questionScope').value='all';
-  }
+  if(!q && !questionTenantContext && document.getElementById('questionScope').value==='tenant') document.getElementById('questionScope').value='all';
+  populateQuestionSectionOptions(q?.section_id||forcedSectionId||'');
   document.getElementById('questionModal').classList.add('open');
 }
+function populateQuestionSectionOptions(selected=''){
+  const scope=document.getElementById('questionScope').value;
+  const select=document.getElementById('questionSection');
+  const options=currentSections.filter(s=>s.scope===scope);
+  select.innerHTML='<option value="">General / No Section</option>'+options.map(s=>`<option value="${s.id}" ${s.id===selected?'selected':''}>${escapeHtml(s.section_name)}</option>`).join('');
+  select.value=options.some(s=>s.id===selected)?selected:'';
+}
+
 function closeQuestionModal(){document.getElementById('questionModal').classList.remove('open');}
 
 async function saveQuestion(){
   const question=document.getElementById('questionText').value.trim();
   const fieldType=document.getElementById('questionType').value;
   const scope=document.getElementById('questionScope').value;
+  const sectionId=document.getElementById('questionSection').value||null;
   if(!question){alert('Enter a question.');return;}
   if(scope==='tenant' && !questionTenantContext){alert('Save the tenant first before adding a tenant-only question.');return;}
 
-  const payload={question,field_type:fieldType,scope,tenant_id:scope==='tenant'?questionTenantContext:null};
+  const payload={question,field_type:fieldType,scope,tenant_id:scope==='tenant'?questionTenantContext:null,section_id:sectionId};
   let res;
   if(editingQuestionId) res=await supabaseClient.from('tenant_questions').update(payload).eq('id',editingQuestionId);
   else res=await supabaseClient.from('tenant_questions').insert(payload);
@@ -980,25 +1207,101 @@ async function deleteQuestion(id){
   if(document.getElementById('globalQuestionsModal').classList.contains('open')) await renderGlobalQuestions();
 }
 
+async function addCustomSection(scope='tenant',tenantId=null){
+  if(scope==='tenant' && !(tenantId||currentTenantId)){alert('Save the tenant first before adding a section.');return;}
+  const name=prompt('Section name (example: Work Information):',''); if(name===null||!name.trim()) return;
+  const payload={scope,tenant_id:scope==='tenant'?(tenantId||currentTenantId):null,section_name:name.trim()};
+  const {error}=await supabaseClient.from('tenant_custom_sections').insert(payload); if(error){alert(error.message);return;}
+  if(currentTenantId){await loadTenantExtras(currentTenantId);renderCustomQuestionsEditor();renderViewExtras();}
+  if(document.getElementById('globalQuestionsModal').classList.contains('open')) await renderGlobalQuestions();
+  showStatus('✓ Section added');
+}
+async function editCustomSection(id){
+  let section=currentSections.find(s=>s.id===id);
+  if(!section){const {data}=await supabaseClient.from('tenant_custom_sections').select('*').eq('id',id).single();section=data;}
+  if(!section) return;
+  const name=prompt('Edit section name:',section.section_name); if(name===null||!name.trim()) return;
+  const {error}=await supabaseClient.from('tenant_custom_sections').update({section_name:name.trim()}).eq('id',id); if(error){alert(error.message);return;}
+  if(currentTenantId){await loadTenantExtras(currentTenantId);renderCustomQuestionsEditor();renderViewExtras();}
+  if(document.getElementById('globalQuestionsModal').classList.contains('open')) await renderGlobalQuestions();
+}
+async function deleteCustomSection(id){
+  let section=currentSections.find(s=>s.id===id);
+  if(!section){const {data}=await supabaseClient.from('tenant_custom_sections').select('*').eq('id',id).single();section=data;}
+  if(!section) return;
+  if(!confirm(`Delete section "${section.section_name}"?\n\nQuestions inside it will NOT be deleted; they will move to General.`)) return;
+  const {error}=await supabaseClient.from('tenant_custom_sections').delete().eq('id',id); if(error){alert(error.message);return;}
+  if(currentTenantId){await loadTenantExtras(currentTenantId);renderCustomQuestionsEditor();renderViewExtras();}
+  if(document.getElementById('globalQuestionsModal').classList.contains('open')) await renderGlobalQuestions();
+}
+
 async function openGlobalQuestionsModal(){
   document.getElementById('globalQuestionsModal').classList.add('open');
   await renderGlobalQuestions();
 }
 function closeGlobalQuestionsModal(){document.getElementById('globalQuestionsModal').classList.remove('open');}
 async function renderGlobalQuestions(){
-  const {data,error}=await supabaseClient.from('tenant_questions').select('*').eq('scope','all').order('sort_order').order('created_at');
+  const [qRes,sRes]=await Promise.all([
+    supabaseClient.from('tenant_questions').select('*').eq('scope','all').order('sort_order').order('created_at'),
+    supabaseClient.from('tenant_custom_sections').select('*').eq('scope','all').order('sort_order').order('created_at')
+  ]);
   const box=document.getElementById('globalQuestionsList');
-  if(error){box.innerHTML=`<div class="empty">${escapeHtml(error.message)}</div>`;return;}
-  const list=data||[];
-  if(!list.length){box.innerHTML='<div class="empty">No global questions yet.</div>';return;}
-  box.innerHTML=list.map(q=>`
-    <div class="custom-row">
-      <div><strong>${escapeHtml(q.question)}</strong><div class="attachment-meta">${escapeHtml(q.field_type.replace('_',' / '))}</div></div>
-      <div class="custom-actions">
-        <button class="small" onclick="openQuestionModal('${q.id}',null,'all')">Edit</button>
-        <button class="small danger" onclick="deleteQuestion('${q.id}')">Delete</button>
-      </div>
+  if(qRes.error||sRes.error){box.innerHTML=`<div class="empty">${escapeHtml(qRes.error?.message||sRes.error?.message||'Could not load')}</div>`;return;}
+  const list=qRes.data||[], secs=sRes.data||[];
+  const groups=[{id:null,name:'General',questions:list.filter(q=>!q.section_id)},...secs.map(sec=>({id:sec.id,name:sec.section_name,section:sec,questions:list.filter(q=>q.section_id===sec.id)}))];
+  if(!list.length&&!secs.length){box.innerHTML='<div class="empty">No global questions or sections yet.</div>';return;}
+  box.innerHTML=groups.filter(g=>g.questions.length||g.section).map(g=>`
+    <div class="section-card">
+      <div class="section-card-head"><div class="section-card-title">${escapeHtml(g.name)}</div>${g.section?`<div class="custom-actions"><button class="small" onclick="openQuestionModal(null,null,'all','${g.id}')">➕ Question</button><button class="small secondary" onclick="editCustomSection('${g.id}')">Edit Section</button><button class="small danger" onclick="deleteCustomSection('${g.id}')">Delete Section</button></div>`:''}</div>
+      ${g.questions.length?g.questions.map(q=>`<div class="custom-row"><div><strong>${escapeHtml(q.question)}</strong><div class="attachment-meta">${escapeHtml(q.field_type.replace('_',' / '))}</div></div><div class="custom-actions"><button class="small" onclick="openQuestionModal('${q.id}',null,'all')">Edit</button><button class="small danger" onclick="deleteQuestion('${q.id}')">Delete</button></div></div>`).join(''):'<div class="empty">No questions in this section.</div>'}
     </div>`).join('');
+}
+
+async function quickRoomAction(tenantId){
+  const t=tenants.find(x=>x.id===tenantId); if(!t) return;
+  switchTenantPageView('rooms'); await loadRooms();
+  const assigned=rooms.find(r=>r.tenant_id===tenantId);
+  if(assigned){
+    openRoomModal(assigned.id);
+  }else{
+    openRoomModal();
+    document.getElementById('roomTenant').value=tenantId;
+    document.getElementById('roomStatus').value='Occupied';
+  }
+}
+async function exportTenantPdf(tenantId){
+  const tenant=tenants.find(t=>t.id===tenantId); if(!tenant){alert('Tenant not found.');return;}
+  const [qRes,aRes,infoRes,tagsRes,secRes,transRes,attRes]=await Promise.all([
+    supabaseClient.from('tenant_questions').select('*').or(`scope.eq.all,tenant_id.eq.${tenantId}`).order('sort_order').order('created_at'),
+    supabaseClient.from('tenant_answers').select('*').eq('tenant_id',tenantId),
+    supabaseClient.from('tenant_other_information').select('*').eq('tenant_id',tenantId).order('created_at'),
+    supabaseClient.from('tenant_tags').select('*').eq('tenant_id',tenantId).order('created_at'),
+    supabaseClient.from('tenant_custom_sections').select('*').or(`scope.eq.all,tenant_id.eq.${tenantId}`).order('sort_order').order('created_at'),
+    supabaseClient.from('tenant_room_transfers').select('*').eq('tenant_id',tenantId).order('transferred_at',{ascending:false}),
+    supabaseClient.from('tenant_attachments').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:false})
+  ]);
+  const {jsPDF}=window.jspdf||{}; if(!jsPDF){alert('PDF library did not load. Please check your internet connection and try again.');return;}
+  const doc=new jsPDF({unit:'mm',format:'a4'});
+  doc.setFontSize(18); doc.text('Tenant Profile',14,16);
+  doc.setFontSize(12); doc.text(tenant.nickname||'',14,23);
+  const basic=[
+    ['Nickname',tenant.nickname||'—'],['Full Name',tenant.full_name||'—'],['Contact',tenant.contact_number||'—'],['Email',tenant.email||'—'],
+    ['Room / Unit',tenant.unit_room||'—'],['Floor / Building',tenant.floor_building||'—'],['Status',tenant.status||'—'],['Move-in',fmtDate(tenant.move_in_date)||'—'],
+    ['Move-out',fmtDate(tenant.move_out_date)||'—'],['Occupants',String(tenant.occupants_count??'—')],['Other Occupants',tenant.other_occupants||'—']
+  ];
+  doc.autoTable({startY:28,head:[['Basic Information','Details']],body:basic,theme:'grid',styles:{fontSize:9}});
+  let y=doc.lastAutoTable.finalY+5;
+  const tags=(tagsRes.data||[]).map(x=>x.tag).join(', ')||'—';
+  const rental=[['Tags',tags],['Monthly Rent',fmtMoney(tenant.monthly_rent)||'—'],['Security Deposit',fmtMoney(tenant.security_deposit)||'—'],['Advance Payment',fmtMoney(tenant.advance_payment)||'—'],['Lease Start',fmtDate(tenant.lease_start_date)||'—'],['Lease End',fmtDate(tenant.lease_end_date)||'—'],['Emergency Contact',tenant.emergency_contact_name||'—'],['Emergency Number',tenant.emergency_contact_number||'—'],['Relationship',tenant.emergency_contact_relationship||'—'],['Notes',tenant.notes||'—']];
+  doc.autoTable({startY:y,head:[['Rental / Contact','Details']],body:rental,theme:'grid',styles:{fontSize:9}}); y=doc.lastAutoTable.finalY+5;
+  const info=(infoRes.data||[]).map(x=>[x.label,x.value||'—']); if(info.length){doc.autoTable({startY:y,head:[['Other Information','Details']],body:info,theme:'grid',styles:{fontSize:9}});y=doc.lastAutoTable.finalY+5;}
+  const answers=Object.fromEntries((aRes.data||[]).map(a=>[a.question_id,a.answer_value||'—'])); const sections=secRes.data||[];
+  const custom=(qRes.data||[]).map(q=>[sections.find(s=>s.id===q.section_id)?.section_name||'General',q.question,answers[q.id]||'—']);
+  if(custom.length){doc.autoTable({startY:y,head:[['Section','Question','Answer']],body:custom,theme:'grid',styles:{fontSize:8}});y=doc.lastAutoTable.finalY+5;}
+  const transfers=(transRes.data||[]).map(x=>[[x.from_unit_name,x.from_floor_building].filter(Boolean).join(' — ')||'Unassigned',[x.to_unit_name,x.to_floor_building].filter(Boolean).join(' — ')||'Unassigned',x.transferred_at?new Date(x.transferred_at).toLocaleString('en-PH'):'—',x.notes||'']);
+  if(transfers.length){doc.autoTable({startY:y,head:[['From','To','Date','Notes']],body:transfers,theme:'grid',styles:{fontSize:8}});y=doc.lastAutoTable.finalY+5;}
+  const attachments=(attRes.data||[]).map(a=>[a.label||a.file_name,a.file_name]); if(attachments.length){doc.autoTable({startY:y,head:[['Attachment','File']],body:attachments,theme:'grid',styles:{fontSize:8}});}
+  const safe=(tenant.nickname||'tenant').replace(/[^a-z0-9_-]+/gi,'_'); doc.save(`Tenant_Profile_${safe}.pdf`);
 }
 
 function switchTenantPageView(view){
@@ -1100,17 +1403,33 @@ async function saveRoom(){
   if(tenantId && status==='Vacant') status='Occupied';
   if(!tenantId && status==='Occupied') status='Vacant';
   const oldRoom=editingRoomId?rooms.find(r=>r.id===editingRoomId):null;
+  const incomingOldRoom=tenantId?rooms.find(r=>r.tenant_id===tenantId && r.id!==editingRoomId):null;
+  const incomingTenant=tenantId?tenants.find(t=>t.id===tenantId):null;
   const payload={unit_name:unitName,floor_building:building||null,status,tenant_id:tenantId,notes:notes||null};
   const res=editingRoomId
-    ? await supabaseClient.from('tenant_units').update(payload).eq('id',editingRoomId)
-    : await supabaseClient.from('tenant_units').insert(payload);
+    ? await supabaseClient.from('tenant_units').update(payload).eq('id',editingRoomId).select('*').single()
+    : await supabaseClient.from('tenant_units').insert(payload).select('*').single();
   if(res.error){
     if(res.error.code==='23505') alert('That Room / Unit already exists for the same building/floor.');
     else alert(res.error.message);
     return;
   }
-  if(oldRoom?.tenant_id && oldRoom.tenant_id!==tenantId) await clearOldRoomTenant(oldRoom.tenant_id,oldRoom.unit_name);
-  if(tenantId) await syncRoomToTenant(tenantId,unitName,building);
+  const savedRoom=res.data;
+  if(oldRoom?.tenant_id && oldRoom.tenant_id!==tenantId){
+    await logRoomTransfer(oldRoom.tenant_id,oldRoom.unit_name,oldRoom.floor_building,null,null,'Removed from room assignment');
+    await clearOldRoomTenant(oldRoom.tenant_id,oldRoom.unit_name);
+  }
+  if(tenantId){
+    const fromRoom=incomingOldRoom?.unit_name||incomingTenant?.unit_room||null;
+    const fromBuilding=incomingOldRoom?.floor_building||incomingTenant?.floor_building||null;
+    if(incomingOldRoom){
+      await supabaseClient.from('tenant_units').update({tenant_id:null,status:'Vacant'}).eq('id',incomingOldRoom.id);
+    }
+    if(!oldRoom || oldRoom.tenant_id!==tenantId || incomingOldRoom){
+      await logRoomTransfer(tenantId,fromRoom,fromBuilding,unitName,building,'Room assigned from Room / Unit Manager');
+    }
+    await syncRoomToTenant(tenantId,unitName,building);
+  }
   closeRoomModal();
   await loadTenants();
   await loadRooms();
@@ -1122,7 +1441,10 @@ async function deleteRoom(id){
   if(!confirm(`Delete room / unit "${room.unit_name}"?\n\nThe tenant profile itself will NOT be deleted.`)) return;
   const {error}=await supabaseClient.from('tenant_units').delete().eq('id',id);
   if(error){ alert(error.message); return; }
-  if(room.tenant_id) await clearOldRoomTenant(room.tenant_id,room.unit_name);
+  if(room.tenant_id){
+    await logRoomTransfer(room.tenant_id,room.unit_name,room.floor_building,null,null,'Room / Unit deleted');
+    await clearOldRoomTenant(room.tenant_id,room.unit_name);
+  }
   if(editingRoomId===id) closeRoomModal();
   await loadTenants();
   await loadRooms();
