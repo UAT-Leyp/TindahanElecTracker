@@ -257,6 +257,7 @@ body.tenant-view-mode .tenant-image-history.visible{display:block}
 <button onclick="prevMonth()">◀ Prev</button>
 <select id="monthSelect"></select>
 <button onclick="nextMonth()">Next ▶</button>
+<button type="button" onclick="openDeleteMonthModal()" style="background:#dc2626" title="Permanently remove one or more months from this tracker">🗑 Delete Month</button>
 </div>
 
 <div class="actions" style="margin-top:10px">
@@ -765,7 +766,9 @@ function saveCurrentMonth(){
  );
 }
  
-function months(){
+let deletedMonths = [];
+
+function allMonths(){
  let arr=[];
 
  // March 2026
@@ -786,26 +789,352 @@ function months(){
 
  return arr;
 }
+
+function months(){
+ const removed = new Set(deletedMonths || []);
+ return allMonths().filter(month => !removed.has(month));
+}
+
+function normalizeDeletedMonths(value){
+ if(Array.isArray(value)){
+   return [...new Set(value.filter(month => allMonths().includes(month)))];
+ }
+
+ if(typeof value === 'string' && value.trim()){
+   try{
+     const parsed = JSON.parse(value);
+     if(Array.isArray(parsed)){
+       return [...new Set(parsed.filter(month => allMonths().includes(month)))];
+     }
+   }catch(error){
+     // Older/manual values can still be read as comma-separated text.
+     return [...new Set(
+       value.split(',')
+         .map(month => month.trim())
+         .filter(month => allMonths().includes(month))
+     )];
+   }
+ }
+
+ return [];
+}
+
+async function loadDeletedMonths(){
+ const cached = localStorage.getItem('elec_deleted_months');
+ deletedMonths = normalizeDeletedMonths(cached || '[]');
+
+ if(!navigator.onLine) return;
+
+ try{
+   const { data, error } = await supabaseClient
+     .from('elec_app_settings')
+     .select('setting_value')
+     .eq('setting_key','deleted_months')
+     .maybeSingle();
+
+   if(error) throw error;
+
+   if(data && data.setting_value != null){
+     deletedMonths = normalizeDeletedMonths(data.setting_value);
+     localStorage.setItem('elec_deleted_months', JSON.stringify(deletedMonths));
+   }
+ }catch(error){
+   console.warn('Could not load deleted month list from Supabase. Using the device cache.',error);
+ }
+}
+
+async function saveDeletedMonths(){
+ deletedMonths = normalizeDeletedMonths(deletedMonths);
+ localStorage.setItem('elec_deleted_months', JSON.stringify(deletedMonths));
+
+ const { error } = await supabaseClient
+   .from('elec_app_settings')
+   .upsert({
+     setting_key:'deleted_months',
+     setting_value:JSON.stringify(deletedMonths)
+   });
+
+ if(error) throw error;
+}
+
+function rebuildMonthOptions(preferredMonth=''){
+ const available = months();
+ const wanted = preferredMonth || monthSelect.value;
+
+ monthSelect.innerHTML = '';
+ available.forEach(month => monthSelect.add(new Option(month,month)));
+
+ if(wanted && available.includes(wanted)){
+   monthSelect.value = wanted;
+ }else if(available.length){
+   monthSelect.value = available[0];
+ }
+}
+
 function initMonths(){
+ rebuildMonthOptions();
 
- const monthList = months();
-
- monthList.forEach(
-   m => monthSelect.add(new Option(m,m))
- );
-
-monthSelect.onchange = async () => {
-
+ monthSelect.onchange = async () => {
    await saveMonth();
    relockTenantEditing();
-
    await loadMonth();
-
    await saveCurrentMonthToSupabase();
-};
+ };
 }
 
 function currentMonth(){return monthSelect.value;}
+
+function openDeleteMonthModal(){
+  if(document.getElementById('deleteMonthModal')) return;
+
+  const monthList = months();
+  const overlay = document.createElement('div');
+  overlay.id = 'deleteMonthModal';
+  overlay.className = 'modal-overlay';
+
+  overlay.innerHTML = `
+    <div class="modal-card" style="width:min(620px,100%)">
+      <h2 style="margin-top:0;color:#fecaca">🗑 Delete Month</h2>
+      <p style="color:#cbd5e1;line-height:1.5">
+        Select one or more months to permanently remove from the Electricity Tracker.
+        The selected month names will disappear from the month selector and Prev / Next navigation.
+      </p>
+      <p style="margin-top:-4px;color:#fbbf24;font-size:13px;line-height:1.45">
+        This also deletes the selected months&apos; electricity rows, meter-reading photo history, and month lock.
+        Tenant Information and all unselected months remain unchanged.
+      </p>
+
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:14px 0">
+        <label style="display:flex;align-items:center;gap:8px;width:max-content;font-weight:700">
+          <input id="deleteMonthSelectAll" type="checkbox" style="width:auto" onchange="toggleDeleteMonthSelectAll(this.checked)">
+          Select All
+        </label>
+        <span id="deleteMonthSelectionCount" style="font-size:13px;color:#cbd5e1">0 selected</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:420px;overflow:auto">
+        ${monthList.map(month => {
+          const count = Number(db.months?.[month]?.tenants?.length || 0);
+          const isCurrent = month === currentMonth();
+          return `
+            <label style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.05);padding:10px;border-radius:9px">
+              <input class="delete-month-check" type="checkbox" value="${escapeHtml(month)}" style="width:auto" onchange="updateDeleteMonthSelectionCount()">
+              <span style="min-width:0">
+                <strong>${escapeHtml(month)}</strong>${isCurrent ? ' <span style="color:#c4b5fd">(Current)</span>' : ''}
+                <span style="display:block;font-size:11px;color:#94a3b8">${count} tenant record${count===1?'':'s'}</span>
+              </span>
+            </label>`;
+        }).join('')}
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px">
+        <button type="button" onclick="closeDeleteMonthModal()" style="background:#475569">Cancel</button>
+        <button type="button" onclick="deleteSelectedMonths()" style="background:#dc2626">Delete Selected Months</button>
+      </div>
+    </div>`;
+
+  overlay.addEventListener('click',event=>{
+    if(event.target===overlay) closeDeleteMonthModal();
+  });
+
+  document.body.appendChild(overlay);
+}
+
+function closeDeleteMonthModal(){
+  document.getElementById('deleteMonthModal')?.remove();
+}
+
+function toggleDeleteMonthSelectAll(checked){
+  document.querySelectorAll('.delete-month-check').forEach(box=>{
+    box.checked = checked;
+  });
+  updateDeleteMonthSelectionCount();
+}
+
+function updateDeleteMonthSelectionCount(){
+  const boxes = [...document.querySelectorAll('.delete-month-check')];
+  const selected = boxes.filter(box=>box.checked).length;
+  const label = document.getElementById('deleteMonthSelectionCount');
+  if(label) label.textContent = `${selected} selected`;
+  const all = document.getElementById('deleteMonthSelectAll');
+  if(all){
+    all.checked = boxes.length > 0 && selected === boxes.length;
+    all.indeterminate = selected > 0 && selected < boxes.length;
+  }
+}
+
+async function removeStoragePathsInChunks(paths){
+  const unique = [...new Set((paths || []).filter(Boolean))];
+  for(let i=0;i<unique.length;i+=100){
+    const chunk = unique.slice(i,i+100);
+    const { error } = await supabaseClient.storage
+      .from('tenant-files')
+      .remove(chunk);
+    if(error) throw error;
+  }
+}
+
+function generateDeleteMonthPhrase(){
+  const wordsA=['EMBER','VIOLET','ORBIT','MAPLE','NOVA','RIVER','CLOUD','BRICK'];
+  const wordsB=['ROOM','METER','MONTH','LOCK','HOUSE','TRACKER','LEDGER','CLOCK'];
+
+  let randomNumber;
+  if(window.crypto && window.crypto.getRandomValues){
+    const values = new Uint32Array(1);
+    window.crypto.getRandomValues(values);
+    randomNumber = 1000 + (values[0] % 9000);
+  }else{
+    randomNumber = 1000 + Math.floor(Math.random()*9000);
+  }
+
+  const a=wordsA[Math.floor(Math.random()*wordsA.length)];
+  const b=wordsB[Math.floor(Math.random()*wordsB.length)];
+  return `${a}-${b}-${randomNumber}`;
+}
+
+function findNearestAvailableMonth(referenceMonth){
+  const available = months();
+  if(available.length===0) return '';
+  if(available.includes(referenceMonth)) return referenceMonth;
+
+  const full = allMonths();
+  const start = full.indexOf(referenceMonth);
+  if(start<0) return available[0];
+
+  for(let distance=1; distance<full.length; distance++){
+    const next = full[start+distance];
+    if(next && available.includes(next)) return next;
+
+    const previous = full[start-distance];
+    if(previous && available.includes(previous)) return previous;
+  }
+
+  return available[0];
+}
+
+async function deleteSelectedMonths(){
+  const selectedMonths = [...document.querySelectorAll('.delete-month-check:checked')]
+    .map(box=>box.value)
+    .filter(Boolean);
+
+  if(selectedMonths.length===0){
+    alert('Select at least one month to delete.');
+    return;
+  }
+
+  if(selectedMonths.length >= months().length){
+    alert('You cannot delete every available month. Keep at least one month in the Electricity Tracker.');
+    return;
+  }
+
+  if(!navigator.onLine){
+    alert('Month deletion is only available while online. Connect to the internet first so the deletion can be completed safely on Supabase.');
+    return;
+  }
+
+  const warning =
+    `Are you sure you want to permanently delete ${selectedMonths.length} month${selectedMonths.length===1?'':'s'}?\n\n` +
+    selectedMonths.join('\n') +
+    `\n\nThe selected month names will be removed from the tracker itself.\n` +
+    `Their electricity rows, meter-reading photos, and lock information will also be deleted.\n\n` +
+    `Tenant Information is NOT deleted. Other months are NOT deleted.\n\n` +
+    `This cannot be undone unless you have a backup.`;
+
+  // Confirmation #1 - normal Are You Sure dialog.
+  if(!confirm(warning)) return;
+
+  // Confirmation #2 - randomly generated phrase that must be typed exactly.
+  const confirmationPhrase = generateDeleteMonthPhrase();
+  const typed = prompt(
+    `SECOND CONFIRMATION\n\n` +
+    `To permanently delete the selected month${selectedMonths.length===1?'':'s'}, type this phrase exactly:\n\n` +
+    `${confirmationPhrase}\n\n` +
+    `Press Cancel to stop.`
+  );
+
+  if(typed === null) return;
+
+  if(typed.trim() !== confirmationPhrase){
+    alert('The confirmation phrase did not match. No months were deleted.');
+    return;
+  }
+
+  showSaving();
+
+  const monthBeforeDelete = currentMonth();
+
+  try{
+    // Finish any older queued offline edits before destructive deletion.
+    if(window.Offline424){
+      const syncResult = await window.Offline424.syncNow();
+      if(syncResult && syncResult.ok===false){
+        throw new Error('Pending offline changes could not be synchronized. Please sync them first, then try deleting the month again.');
+      }
+    }
+
+    for(const month of selectedMonths){
+      // Remove any stored meter images belonging to this month first.
+      const { data: photoRows, error: photoReadError } = await supabaseClient
+        .from('elec_meter_reading_photos')
+        .select('id,storage_path')
+        .eq('month',month);
+
+      if(photoReadError) throw photoReadError;
+
+      await removeStoragePathsInChunks((photoRows || []).map(row=>row.storage_path));
+
+      const { error: photoDeleteError } = await supabaseClient
+        .from('elec_meter_reading_photos')
+        .delete()
+        .eq('month',month);
+      if(photoDeleteError) throw photoDeleteError;
+
+      const { error: billDeleteError } = await supabaseClient
+        .from('elec_tenant_bills')
+        .delete()
+        .eq('month',month);
+      if(billDeleteError) throw billDeleteError;
+
+      const { error: lockDeleteError } = await supabaseClient
+        .from('elec_month_locks')
+        .delete()
+        .eq('month',month);
+      if(lockDeleteError) throw lockDeleteError;
+
+      delete db.months[month];
+    }
+
+    // Persist the removed month names so they disappear on every device.
+    deletedMonths = [...new Set([...deletedMonths, ...selectedMonths])];
+    await saveDeletedMonths();
+
+    const nextMonth = findNearestAvailableMonth(monthBeforeDelete);
+    rebuildMonthOptions(nextMonth);
+
+    closeDeleteMonthModal();
+    meterPhotoRows = [];
+    meterPhotoLoadKey = '';
+    currentMonthLocked = false;
+    currentMonthLockRow = null;
+
+    // Reload from the cloud so IndexedDB and the visible tracker reflect the deletion.
+    await loadDB();
+    await loadMonth();
+    await loadMonthLock();
+    await saveCurrentMonthToSupabase();
+
+    showSaved();
+    alert(
+      `${selectedMonths.length} month${selectedMonths.length===1?'':'s'} permanently deleted.\n\n` +
+      `They have been removed from the month selector and Prev / Next navigation.`
+    );
+  }catch(error){
+    console.error('Delete month failed:',error);
+    showSaveError();
+    alert('Delete month failed: ' + (error?.message || error));
+  }
+}
+
  async function saveCurrentMonthToSupabase(){
 
   const { error } =
@@ -1964,6 +2293,7 @@ async function saveDB(){}
 
 window.addEventListener('load', async () => {
 
+  await loadDeletedMonths();
   initMonths();
   await loadDB();
 
@@ -1977,8 +2307,8 @@ if(
   )
 ){
   monthSelect.value = savedMonth;
-}else{
-  monthSelect.value = 'March 2026';
+}else if(months().length){
+  monthSelect.value = months()[0];
 }
 
   await loadMonth();
