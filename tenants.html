@@ -83,6 +83,24 @@ tr:hover td{background:rgba(255,255,255,.025)}
 .save-status.error{color:#fecaca}
 .question-modal-card{width:min(560px,100%)}
 .required::after{content:' *';color:#fca5a5}
+
+.site-nav{position:sticky;top:8px;z-index:9000;display:flex;justify-content:center;gap:5px;width:max-content;max-width:100%;margin:0 auto 12px;padding:5px;background:rgba(9,13,31,.9);border:1px solid rgba(196,181,253,.22);border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.22);backdrop-filter:blur(10px)}
+.site-nav a{color:#dbe4ff;text-decoration:none;font-size:12px;font-weight:700;padding:7px 10px;border-radius:999px;white-space:nowrap;transition:.15s}
+.site-nav a:hover{background:rgba(255,255,255,.08);color:#fff}
+.site-nav a.active{background:#8B5CF6;color:#fff}
+.view-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 12px}
+.view-tabs button{padding:8px 12px;font-size:13px;background:#30204d}
+.view-tabs button.active{background:#8B5CF6;box-shadow:0 0 0 1px rgba(255,255,255,.12) inset}
+.other-info-list{display:grid;gap:8px;margin-top:10px}
+.other-info-item{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.02)}
+.other-info-label{font-weight:700;color:#ddd6fe;margin-bottom:4px}
+.room-status{display:inline-flex;padding:5px 8px;border-radius:999px;font-size:11px;font-weight:800}
+.room-status.vacant{background:rgba(22,163,74,.18);color:#86efac}
+.room-status.occupied{background:rgba(59,130,246,.18);color:#93c5fd}
+.room-status.reserved{background:rgba(245,158,11,.18);color:#fcd34d}
+.room-status.maintenance{background:rgba(220,38,38,.18);color:#fca5a5}
+.nickname-link{background:none;border:none;padding:0;color:#ddd6fe;text-decoration:underline;text-underline-offset:3px;font-weight:800;cursor:pointer}
+.nickname-link:hover{color:#fff;filter:none}
 @media(max-width:800px){
   body{padding:10px}
   .stats{grid-template-columns:1fr}
@@ -95,21 +113,32 @@ tr:hover td{background:rgba(255,255,255,.025)}
   .actions .grow{min-width:0}
   .nav{width:100%}
   .nav .btn{flex:1}
+  .site-nav{width:100%;overflow:auto;justify-content:flex-start;border-radius:12px}
+  .other-info-item{grid-template-columns:1fr}
 }
 </style>
 </head>
 <body>
+<nav class="site-nav" aria-label="424 Systems navigation">
+  <a href="index.html">⌂ Home</a>
+  <a href="electricity.html">⚡ ELEC</a>
+  <a href="tindahan.html">🛒 POS</a>
+  <a class="active" href="tenants.html">👥 Tenants</a>
+</nav>
+
 <div class="topbar">
   <div>
     <h1>👥 Tenant Information</h1>
-    <div style="color:#b8c2d8;margin-top:5px">Profiles and rental information only</div>
-  </div>
-  <div class="nav">
-    <a class="btn secondary" href="index.html">← Home</a>
-    <a class="btn" href="electricity.html">⚡ ELEC Tracker</a>
+    <div style="color:#b8c2d8;margin-top:5px">Profiles, rental information and room assignments</div>
   </div>
 </div>
 
+<div class="view-tabs">
+  <button id="tenantViewTab" class="active" onclick="switchTenantPageView('tenants')">👥 Tenants</button>
+  <button id="roomViewTab" onclick="switchTenantPageView('rooms')">🏠 Rooms / Units</button>
+</div>
+
+<div id="tenantsView">
 <div class="card">
   <div class="actions">
     <button onclick="openTenantModal('new')">➕ Add Tenant</button>
@@ -147,6 +176,36 @@ tr:hover td{background:rgba(255,255,255,.025)}
       </thead>
       <tbody id="tenantTableBody"></tbody>
     </table>
+  </div>
+</div>
+</div>
+
+<div id="roomsView" style="display:none">
+  <div class="card">
+    <div class="actions">
+      <button onclick="openRoomModal()">➕ Add Room / Unit</button>
+      <input class="grow" id="roomSearchInput" placeholder="Search room, building, tenant..." oninput="renderRooms()">
+      <select id="roomStatusFilter" style="max-width:180px" onchange="renderRooms()">
+        <option value="All">All Status</option>
+        <option value="Vacant">Vacant</option>
+        <option value="Occupied">Occupied</option>
+        <option value="Reserved">Reserved</option>
+        <option value="Maintenance">Maintenance</option>
+      </select>
+    </div>
+    <div class="stats">
+      <div class="stat"><span>Total Units</span><strong id="roomStatTotal">0</strong></div>
+      <div class="stat"><span>Occupied</span><strong id="roomStatOccupied">0</strong></div>
+      <div class="stat"><span>Vacant</span><strong id="roomStatVacant">0</strong></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Room / Unit</th><th>Floor / Building</th><th>Status</th><th>Tenant Nickname</th><th>Notes</th><th>Actions</th></tr></thead>
+        <tbody id="roomTableBody"></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -217,6 +276,49 @@ tr:hover td{background:rgba(255,255,255,.025)}
   </div>
 </div>
 
+<!-- Other Information modal -->
+<div class="modal" id="otherInfoModal" onclick="closeOnBackdrop(event,'otherInfoModal')">
+  <div class="modal-card question-modal-card">
+    <div class="modal-head">
+      <h2 id="otherInfoModalTitle">Add Information</h2>
+      <button class="secondary small" onclick="closeOtherInfoModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label class="required">Information Name</label><input id="otherInfoLabel" placeholder="Example: Vehicle / Plate Number"></div>
+      <div class="field" style="margin-top:12px"><label>Details</label><textarea id="otherInfoValue" placeholder="Enter details"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="secondary" onclick="closeOtherInfoModal()">Cancel</button>
+      <button onclick="saveOtherInfo()">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Room / Unit modal -->
+<div class="modal" id="roomModal" onclick="closeOnBackdrop(event,'roomModal')">
+  <div class="modal-card" style="width:min(680px,100%)">
+    <div class="modal-head">
+      <h2 id="roomModalTitle">Add Room / Unit</h2>
+      <button class="secondary small" onclick="closeRoomModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid">
+        <div class="field"><label class="required">Room / Unit</label><input id="roomName" placeholder="Example: Room 2"></div>
+        <div class="field"><label>Floor / Building</label><input id="roomBuilding" placeholder="Example: 2nd Floor"></div>
+        <div class="field"><label>Status</label><select id="roomStatus"><option>Vacant</option><option>Occupied</option><option>Reserved</option><option>Maintenance</option></select></div>
+        <div class="field"><label>Tenant Nickname</label><select id="roomTenant"><option value="">— No tenant assigned —</option></select></div>
+        <div class="field full"><label>Notes</label><textarea id="roomNotes" placeholder="Optional room notes"></textarea></div>
+      </div>
+      <div class="notice" style="margin-top:12px">Selecting a tenant links this room to that tenant's nickname and updates the tenant's Unit / Room field when saved.</div>
+    </div>
+    <div class="modal-foot">
+      <button id="roomDeleteBtn" class="danger" style="margin-right:auto;display:none" onclick="deleteRoomFromModal()">🗑 Delete</button>
+      <button class="secondary" onclick="closeRoomModal()">Cancel</button>
+      <button onclick="saveRoom()">💾 Save Room</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const SUPABASE_URL='https://carodzdpubzulokuvefl.supabase.co';
 const SUPABASE_KEY='sb_publishable_cnRdXcQn3gTlYYVlRe8heg_P6tucIyP';
@@ -229,6 +331,10 @@ let currentMode='view';
 let currentQuestions=[];
 let currentAnswers={};
 let currentAttachments=[];
+let currentOtherInfo=[];
+let rooms=[];
+let editingOtherInfoId=null;
+let editingRoomId=null;
 let editingQuestionId=null;
 let questionTenantContext=null;
 let saveStatusTimer=null;
@@ -334,6 +440,7 @@ async function openTenantModal(mode,id=null){
   currentQuestions=[];
   currentAnswers={};
   currentAttachments=[];
+  currentOtherInfo=[];
 
   let tenant=blankTenant();
   if(id){
@@ -353,17 +460,20 @@ async function openTenantModal(mode,id=null){
 }
 
 async function loadTenantExtras(tenantId){
-  const [qRes,aRes,attRes]=await Promise.all([
+  const [qRes,aRes,attRes,infoRes]=await Promise.all([
     supabaseClient.from('tenant_questions').select('*').or(`scope.eq.all,tenant_id.eq.${tenantId}`).order('sort_order').order('created_at'),
     supabaseClient.from('tenant_answers').select('*').eq('tenant_id',tenantId),
-    supabaseClient.from('tenant_attachments').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:false})
+    supabaseClient.from('tenant_attachments').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:false}),
+    supabaseClient.from('tenant_other_information').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:true})
   ]);
   if(qRes.error) console.error(qRes.error);
   if(aRes.error) console.error(aRes.error);
   if(attRes.error) console.error(attRes.error);
+  if(infoRes.error) console.error(infoRes.error);
   currentQuestions=qRes.data||[];
   currentAnswers=Object.fromEntries((aRes.data||[]).map(a=>[a.question_id,a.answer_value??'']));
   currentAttachments=attRes.data||[];
+  currentOtherInfo=infoRes.data||[];
 }
 
 function renderTenantFooter(mode,id){
@@ -436,12 +546,13 @@ function renderEditForm(t){
     </div>
 
     <div class="section">
-      <div class="section-title"><h3>Other Information</h3></div>
-      <div class="grid">
-        ${textArea('Vehicle / Plate Number','vehicle_details',t.vehicle_details)}
-        ${textArea('Pet Information','pet_information',t.pet_information)}
-        ${textArea('Notes','notes',t.notes)}
+      <div class="section-title">
+        <h3>Other Information</h3>
+        ${t.id?`<button type="button" class="small" onclick="openOtherInfoModal()">➕ Add</button>`:''}
       </div>
+      ${textArea('Notes','notes',t.notes)}
+      ${!t.id?'<div class="notice" style="margin-top:10px">Save this tenant first, then you can add optional information such as Vehicle / Plate Number, Pet Information, Employer, Parking Slot, or anything else.</div>':''}
+      <div id="otherInfoListEdit" class="other-info-list">${renderOtherInfo(false)}</div>
     </div>
 
     <div class="section">
@@ -513,12 +624,12 @@ function renderView(t){
     </div>
 
     <div class="section">
-      <div class="section-title"><h3>Other Information</h3></div>
-      <div class="grid">
-        ${readBox('Vehicle / Plate Number',t.vehicle_details,true)}
-        ${readBox('Pet Information',t.pet_information,true)}
-        ${readBox('Notes',t.notes,true)}
+      <div class="section-title">
+        <h3>Other Information</h3>
+        <button type="button" class="small" onclick="openOtherInfoModal()">➕ Add</button>
       </div>
+      ${readBox('Notes',t.notes,true)}
+      <div id="otherInfoListView" class="other-info-list">${renderOtherInfo(false)}</div>
     </div>
 
     <div class="section">
@@ -568,6 +679,64 @@ function renderCustomQuestionsEditor(){
     </div>`).join('');
 }
 
+function renderOtherInfo(viewOnly){
+  if(!currentOtherInfo.length) return '<div class="empty">No optional information added.</div>';
+  return currentOtherInfo.map(item=>`
+    <div class="other-info-item">
+      <div>
+        <div class="other-info-label">${escapeHtml(item.label)}</div>
+        <div class="read-value">${escapeHtml(item.value||'—')}</div>
+      </div>
+      ${viewOnly?'':`<div class="custom-actions">
+        <button type="button" class="small" onclick="openOtherInfoModal('${item.id}')">Edit</button>
+        <button type="button" class="small danger" onclick="deleteOtherInfo('${item.id}')">Delete</button>
+      </div>`}
+    </div>`).join('');
+}
+
+function refreshOtherInfoLists(){
+  const edit=document.getElementById('otherInfoListEdit');
+  const view=document.getElementById('otherInfoListView');
+  if(edit) edit.innerHTML=renderOtherInfo(false);
+  if(view) view.innerHTML=renderOtherInfo(true);
+}
+
+function openOtherInfoModal(id=null){
+  if(!currentTenantId){ alert('Save the tenant first before adding optional information.'); return; }
+  editingOtherInfoId=id;
+  const item=id?currentOtherInfo.find(x=>x.id===id):null;
+  document.getElementById('otherInfoModalTitle').textContent=item?'✏️ Edit Information':'➕ Add Information';
+  document.getElementById('otherInfoLabel').value=item?.label||'';
+  document.getElementById('otherInfoValue').value=item?.value||'';
+  document.getElementById('otherInfoModal').classList.add('open');
+}
+function closeOtherInfoModal(){ document.getElementById('otherInfoModal').classList.remove('open'); }
+
+async function saveOtherInfo(){
+  const label=document.getElementById('otherInfoLabel').value.trim();
+  const value=document.getElementById('otherInfoValue').value.trim();
+  if(!label){ alert('Enter the information name.'); return; }
+  const payload={tenant_id:currentTenantId,label,value:value||null};
+  const res=editingOtherInfoId
+    ? await supabaseClient.from('tenant_other_information').update({label,value:value||null}).eq('id',editingOtherInfoId)
+    : await supabaseClient.from('tenant_other_information').insert(payload);
+  if(res.error){ alert(res.error.message); return; }
+  closeOtherInfoModal();
+  await loadTenantExtras(currentTenantId);
+  refreshOtherInfoLists();
+  showStatus('✓ Information saved');
+}
+
+async function deleteOtherInfo(id){
+  const item=currentOtherInfo.find(x=>x.id===id); if(!item) return;
+  if(!confirm(`Delete "${item.label}" from this tenant's Other Information?`)) return;
+  const {error}=await supabaseClient.from('tenant_other_information').delete().eq('id',id);
+  if(error){ alert(error.message); return; }
+  await loadTenantExtras(currentTenantId);
+  refreshOtherInfoLists();
+  showStatus('✓ Information deleted');
+}
+
 function renderAttachments(viewOnly){
   if(!currentAttachments.length) return '<div class="empty">No attachments.</div>';
   return currentAttachments.map(a=>`
@@ -608,8 +777,6 @@ function collectTenantPayload(){
     advance_payment:nullableNumber(getFormValue('advance_payment')),
     lease_start_date:getFormValue('lease_start_date')||null,
     lease_end_date:getFormValue('lease_end_date')||null,
-    vehicle_details:getFormValue('vehicle_details')||null,
-    pet_information:getFormValue('pet_information')||null,
     notes:getFormValue('notes')||null
   };
 }
@@ -834,6 +1001,135 @@ async function renderGlobalQuestions(){
     </div>`).join('');
 }
 
+function switchTenantPageView(view){
+  const tenantMode=view==='tenants';
+  document.getElementById('tenantsView').style.display=tenantMode?'':'none';
+  document.getElementById('roomsView').style.display=tenantMode?'none':'';
+  document.getElementById('tenantViewTab').classList.toggle('active',tenantMode);
+  document.getElementById('roomViewTab').classList.toggle('active',!tenantMode);
+  if(!tenantMode) loadRooms();
+}
+
+async function loadRooms(){
+  const {data,error}=await supabaseClient.from('tenant_units').select('*').order('unit_name',{ascending:true});
+  if(error){
+    console.error(error);
+    document.getElementById('roomTableBody').innerHTML=`<tr><td colspan="6" class="empty">${escapeHtml(error.message)}</td></tr>`;
+    return;
+  }
+  rooms=data||[];
+  renderRooms();
+  updateRoomStats();
+}
+
+function roomStatusBadge(status){
+  const cls=String(status||'').toLowerCase().replaceAll(' ','-');
+  return `<span class="room-status ${cls}">${escapeHtml(status||'')}</span>`;
+}
+function tenantNicknameById(id){ return tenants.find(t=>t.id===id)?.nickname||''; }
+function updateRoomStats(){
+  document.getElementById('roomStatTotal').textContent=rooms.length;
+  document.getElementById('roomStatOccupied').textContent=rooms.filter(r=>r.status==='Occupied').length;
+  document.getElementById('roomStatVacant').textContent=rooms.filter(r=>r.status==='Vacant').length;
+}
+function renderRooms(){
+  const body=document.getElementById('roomTableBody'); if(!body) return;
+  const q=(document.getElementById('roomSearchInput')?.value||'').toLowerCase().trim();
+  const status=document.getElementById('roomStatusFilter')?.value||'All';
+  const filtered=rooms.filter(r=>{
+    const nick=tenantNicknameById(r.tenant_id);
+    const hay=[r.unit_name,r.floor_building,r.notes,nick].join(' ').toLowerCase();
+    return (!q||hay.includes(q)) && (status==='All'||r.status===status);
+  });
+  if(!filtered.length){ body.innerHTML='<tr><td colspan="6" class="empty">No rooms / units found.</td></tr>'; return; }
+  body.innerHTML=filtered.map(r=>{
+    const nick=tenantNicknameById(r.tenant_id);
+    return `<tr>
+      <td><strong>${escapeHtml(r.unit_name)}</strong></td>
+      <td>${escapeHtml(r.floor_building||'—')}</td>
+      <td>${roomStatusBadge(r.status)}</td>
+      <td>${r.tenant_id&&nick?`<button class="nickname-link" onclick="openTenantModal('view','${r.tenant_id}')">${escapeHtml(nick)}</button>`:'—'}</td>
+      <td>${escapeHtml(r.notes||'—')}</td>
+      <td><div class="actions" style="gap:6px"><button class="small" onclick="openRoomModal('${r.id}')">Edit</button><button class="small danger" onclick="deleteRoom('${r.id}')">Delete</button></div></td>
+    </tr>`;
+  }).join('');
+}
+
+function populateRoomTenantOptions(selected=''){
+  const select=document.getElementById('roomTenant');
+  select.innerHTML='<option value="">— No tenant assigned —</option>'+tenants
+    .filter(t=>t.status!=='Moved Out' || t.id===selected)
+    .map(t=>`<option value="${t.id}" ${t.id===selected?'selected':''}>${escapeHtml(t.nickname)}${t.unit_room?` — ${escapeHtml(t.unit_room)}`:''}</option>`).join('');
+}
+function openRoomModal(id=null){
+  editingRoomId=id;
+  const room=id?rooms.find(r=>r.id===id):null;
+  document.getElementById('roomModalTitle').textContent=room?'✏️ Edit Room / Unit':'➕ Add Room / Unit';
+  document.getElementById('roomName').value=room?.unit_name||'';
+  document.getElementById('roomBuilding').value=room?.floor_building||'';
+  document.getElementById('roomStatus').value=room?.status||'Vacant';
+  populateRoomTenantOptions(room?.tenant_id||'');
+  document.getElementById('roomTenant').value=room?.tenant_id||'';
+  document.getElementById('roomNotes').value=room?.notes||'';
+  document.getElementById('roomDeleteBtn').style.display=room?'':'none';
+  document.getElementById('roomModal').classList.add('open');
+}
+function closeRoomModal(){ document.getElementById('roomModal').classList.remove('open'); editingRoomId=null; }
+
+async function syncRoomToTenant(tenantId,roomName,building){
+  if(!tenantId) return;
+  const {error}=await supabaseClient.from('tenant_profiles').update({unit_room:roomName||null,floor_building:building||null}).eq('id',tenantId);
+  if(error) console.error('Tenant room sync failed:',error);
+}
+async function clearOldRoomTenant(oldTenantId,roomName){
+  if(!oldTenantId) return;
+  const oldTenant=tenants.find(t=>t.id===oldTenantId);
+  if(oldTenant && String(oldTenant.unit_room||'').trim().toLowerCase()===String(roomName||'').trim().toLowerCase()){
+    const {error}=await supabaseClient.from('tenant_profiles').update({unit_room:null,floor_building:null}).eq('id',oldTenantId);
+    if(error) console.error('Old tenant room clear failed:',error);
+  }
+}
+
+async function saveRoom(){
+  const unitName=document.getElementById('roomName').value.trim();
+  const building=document.getElementById('roomBuilding').value.trim();
+  let status=document.getElementById('roomStatus').value;
+  const tenantId=document.getElementById('roomTenant').value||null;
+  const notes=document.getElementById('roomNotes').value.trim();
+  if(!unitName){ alert('Room / Unit is required.'); return; }
+  if(tenantId && status==='Vacant') status='Occupied';
+  if(!tenantId && status==='Occupied') status='Vacant';
+  const oldRoom=editingRoomId?rooms.find(r=>r.id===editingRoomId):null;
+  const payload={unit_name:unitName,floor_building:building||null,status,tenant_id:tenantId,notes:notes||null};
+  const res=editingRoomId
+    ? await supabaseClient.from('tenant_units').update(payload).eq('id',editingRoomId)
+    : await supabaseClient.from('tenant_units').insert(payload);
+  if(res.error){
+    if(res.error.code==='23505') alert('That Room / Unit already exists for the same building/floor.');
+    else alert(res.error.message);
+    return;
+  }
+  if(oldRoom?.tenant_id && oldRoom.tenant_id!==tenantId) await clearOldRoomTenant(oldRoom.tenant_id,oldRoom.unit_name);
+  if(tenantId) await syncRoomToTenant(tenantId,unitName,building);
+  closeRoomModal();
+  await loadTenants();
+  await loadRooms();
+  showStatus('✓ Room saved');
+}
+
+async function deleteRoom(id){
+  const room=rooms.find(r=>r.id===id); if(!room) return;
+  if(!confirm(`Delete room / unit "${room.unit_name}"?\n\nThe tenant profile itself will NOT be deleted.`)) return;
+  const {error}=await supabaseClient.from('tenant_units').delete().eq('id',id);
+  if(error){ alert(error.message); return; }
+  if(room.tenant_id) await clearOldRoomTenant(room.tenant_id,room.unit_name);
+  if(editingRoomId===id) closeRoomModal();
+  await loadTenants();
+  await loadRooms();
+  showStatus('✓ Room deleted');
+}
+function deleteRoomFromModal(){ if(editingRoomId) deleteRoom(editingRoomId); }
+
 async function openFromUrl(){
   const params=new URLSearchParams(location.search);
   if(params.get('new')==='1'){
@@ -854,6 +1150,7 @@ async function openFromUrl(){
 
 window.addEventListener('load',async()=>{
   await loadTenants();
+  await loadRooms();
   await openFromUrl();
 });
 </script>

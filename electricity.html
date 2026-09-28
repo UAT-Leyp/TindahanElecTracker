@@ -211,10 +211,20 @@ body.history-view-mode #trackerTableSection{display:none}
  .history-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
  table{font-size:12px}
 }
+.site-nav{position:sticky;top:8px;z-index:9000;display:flex;justify-content:center;gap:5px;width:max-content;max-width:100%;margin:0 auto 12px;padding:5px;background:rgba(9,13,31,.90);border:1px solid rgba(255,255,255,.15);border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.20);backdrop-filter:blur(10px)}
+.site-nav a{color:#dbe4ff;text-decoration:none;font-size:12px;font-weight:700;padding:7px 10px;border-radius:999px;white-space:nowrap;transition:.15s}
+.site-nav a:hover{background:rgba(255,255,255,.08);color:#fff}
+.site-nav a.active{background:#8B5CF6;color:#fff}
+@media(max-width:560px){.site-nav{width:100%;overflow:auto;justify-content:flex-start;border-radius:12px}}
 </style>
 </head>
 <body>
-<a href="/" aria-label="Back to app selection" style="position:fixed;top:12px;right:12px;z-index:9999;background:#8B5CF6;color:#fff;text-decoration:none;padding:9px 12px;border-radius:10px;font:600 14px Arial,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25)">← Home</a>
+<nav class="site-nav" aria-label="424 Systems navigation">
+  <a href="index.html">⌂ Home</a>
+  <a class="active" href="electricity.html">⚡ ELEC</a>
+  <a href="tindahan.html">🛒 POS</a>
+  <a href="tenants.html">👥 Tenants</a>
+</nav>
 
 <h1>ARAGON Tenant Electricity Tracker</h1>
 
