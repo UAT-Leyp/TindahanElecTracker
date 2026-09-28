@@ -19,15 +19,14 @@ table{
   border-collapse:collapse;
   table-layout:fixed;
 }
- th:nth-child(1), td:nth-child(1){ width:20%; } /* Tenant */
-th:nth-child(2), td:nth-child(2){ width:8%; }  /* Previous */
-th:nth-child(3), td:nth-child(3){ width:8%; }  /* Current */
-th:nth-child(4), td:nth-child(4){ width:6%; }  /* Consumed */
-th:nth-child(5), td:nth-child(5){ width:10%; } /* Price */
-th:nth-child(6), td:nth-child(6){ width:8%; }  /* Total */
-th:nth-child(7), td:nth-child(7){ width:10%; } /* Status */
-th:nth-child(8), td:nth-child(8){ width:15%; } /* Proof */
-th:nth-child(9), td:nth-child(9){ width:7%; }  /* Delete */
+ th:nth-child(1), td:nth-child(1){ width:180px; } /* Tenant */
+th:nth-child(2), td:nth-child(2){ width:105px; }  /* Previous */
+th:nth-child(3), td:nth-child(3){ width:105px; }  /* Current */
+th:nth-child(4), td:nth-child(4){ width:90px; }   /* Consumed */
+th:nth-child(5), td:nth-child(5){ width:100px; }  /* Price */
+th:nth-child(6), td:nth-child(6){ width:115px; }  /* Other Charges */
+th:nth-child(7), td:nth-child(7){ width:110px; }  /* Total */
+th:nth-child(8), td:nth-child(8){ width:82px; }   /* Status */
 th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,.15)}
 th{background:#321a57}
 .paid{background:#16a34a}.unpaid{background:#dc2626}
@@ -65,9 +64,23 @@ td:first-child{
 }
 
 
-.proof-cell{
-  text-align:center;
+.status{
+  width:76px !important;
+  min-width:76px;
+  padding:6px 5px;
+  font-size:12px;
+  margin:auto;
 }
+.charges-cell{text-align:center}
+.other-charge-input{width:95px;min-width:85px;text-align:right;margin:auto;display:block}
+.tracker-table-wrap{overflow-x:auto}
+.tracker-table-wrap table{min-width:900px;table-layout:auto}
+.status{max-width:78px;padding:6px 4px;font-size:12px}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto}
+.modal-card{background:#17122a;border:1px solid rgba(255,255,255,.18);border-radius:18px;width:min(680px,100%);max-height:92vh;overflow:auto;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5);color:#fff}
+.calc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.calc-grid button{font-size:18px;padding:14px 8px}
+.calc-display{font-size:24px;text-align:right;padding:14px}
 
 .save-status{
   display:inline-flex;
@@ -134,10 +147,6 @@ td:first-child{
   color:#fff;
 }
 body.tenant-view-mode .actions{display:none}
-body.tenant-view-mode th.action-col,
-body.tenant-view-mode td.action-col{display:none}
-body.tenant-view-mode .proofFile{display:none !important}
-body.tenant-view-mode.tenant-edit-unlocked .proofFile{display:inline-block !important}
 body.tenant-view-mode .tenant-profile-link{
   pointer-events:none;
   text-decoration:none;
@@ -222,6 +231,7 @@ body.history-view-mode #trackerTableSection{display:none}
 <button onclick="reflectForward()" title="Save this month and reflect carry-forward changes to all later months">🔄 Reflect</button>
 <button onclick="saveMonth()">Save Data</button>
 <button onclick="exportBackup()">💾 Export Backup (JSON)</button>
+<button onclick="openDeleteTenantModal()" style="background:#dc2626">🗑 Delete Tenant</button>
 
 <input
   type="text"
@@ -259,6 +269,7 @@ body.history-view-mode #trackerTableSection{display:none}
 
   <button id="toggleTenantEditBtn" class="tenant-edit-toggle" type="button" onclick="toggleTenantEditing()">🔓 Unlock Editing</button>
   <button id="exportPdfBtn" type="button" onclick="exportPDF()">📄 Export PDF</button>
+  <button id="calculatorBtn" type="button" onclick="openCalculator()">🧮 Calculator</button>
 
   <span id="tenantViewNote" class="tenant-view-note">Owner view — all tenants are visible.</span>
 </div>
@@ -276,7 +287,7 @@ body.history-view-mode #trackerTableSection{display:none}
       <thead>
         <tr>
           <th>Month</th><th>Previous kWh</th><th>Current kWh</th><th>Consumed</th>
-          <th>Price/kWh</th><th>Total Bill</th><th>Status</th>
+          <th>Price/kWh</th><th>Other Charges</th><th>Total Bill</th><th>Status</th>
         </tr>
       </thead>
       <tbody id="historyBody"></tbody>
@@ -287,15 +298,17 @@ body.history-view-mode #trackerTableSection{display:none}
 
 <div id="trackerTableSection">
 <h2>Electricity Tracker</h2>
+<div class="tracker-table-wrap">
 <table>
 <thead>
 <tr>
 <th>Tenant</th><th>Previous kWh</th><th>Current kWh</th><th>Consumed</th>
-<th>Price/kWh</th><th>Total Bill</th><th>Status</th><th>Proof/Notes</th><th class="action-col">Action</th>
+<th>Price/kWh</th><th>Other Charges</th><th>Total Bill</th><th>Status</th>
 </tr>
 </thead>
 <tbody id="tenantBody"></tbody>
 </table>
+</div>
 </div>
 </div>
 
@@ -379,7 +392,7 @@ async function loadHistoryTenantChoices(){
 
   const { data, error } = await supabaseClient
     .from('elec_tenant_bills')
-    .select('tenant_id,tenant_name,month,previous_kwh,current_kwh,price_per_kwh,status,proof_url,display_order');
+    .select('tenant_id,tenant_name,month,previous_kwh,current_kwh,price_per_kwh,status,other_charges,display_order');
 
   if(error){
     console.error(error);
@@ -464,7 +477,8 @@ function renderHistoryView(){
     const current = Number(row.current_kwh || 0);
     const price = Number(row.price_per_kwh || 0);
     const consumed = Math.max(0, current - previous);
-    const total = consumed * price;
+    const otherCharges = sumOtherCharges(row.other_charges);
+    const total = consumed * price + otherCharges;
 
     body.innerHTML += `
       <tr>
@@ -473,6 +487,7 @@ function renderHistoryView(){
         <td>${current.toFixed(2)}</td>
         <td><strong>${consumed.toFixed(2)}</strong></td>
         <td>₱${price.toFixed(2)}</td>
+        <td>₱${otherCharges.toFixed(2)}</td>
         <td>₱${total.toFixed(2)}</td>
         <td>${escapeHtml(row.status || '')}</td>
       </tr>`;
@@ -605,12 +620,10 @@ function selectTenantView(value){
 }
 
 function setRowTenantReadOnly(row, readOnly){
-  row.querySelectorAll('.prev,.curr,.price,.status').forEach(control => {
+  row.querySelectorAll('.prev,.curr,.price,.status,.other-charge-input').forEach(control => {
     control.disabled = readOnly;
   });
 
-  const proof = row.querySelector('.proofFile');
-  if(proof) proof.disabled = readOnly;
 }
 
 function applyTrackerView(){
@@ -769,7 +782,7 @@ function ensureMonth(m){
 
  // Always carry the same tenants forward from the previous month.
  // Previous month's CURRENT kWh becomes the new month's PREVIOUS kWh.
- // Current kWh, payment status, and proof start fresh for the new month.
+ // Current kWh, payment status, and other charges start fresh for the new month.
  if(p && db.months[p]){
    db.months[m] = {
      tenants: db.months[p].tenants.map(t => ({
@@ -780,7 +793,8 @@ function ensureMonth(m){
        current: '',
        price: t.price ?? '',
        status: 'Unpaid',
-       proof_url: ''
+       proof_url: '',
+       other_charges: {}
      }))
    };
  }else{
@@ -911,13 +925,13 @@ async function loadCopyChoices(){
        <label><input type="checkbox" class="copy-field" value="current" style="width:auto"> CURRENT kWh</label>
        <label><input type="checkbox" class="copy-field" value="price" checked style="width:auto"> PRICE / kWh</label>
        <label><input type="checkbox" class="copy-field" value="status" style="width:auto"> STATUS</label>
-       <label><input type="checkbox" class="copy-field" value="proof" style="width:auto"> PROOF LINK</label>
+       <label><input type="checkbox" class="copy-field" value="otherCharges" style="width:auto"> OTHER CHARGES</label>
      </div>
    </div>
 
    <div style="font-size:13px;opacity:.78;margin-bottom:16px;line-height:1.45">
      Existing tenants with the same name are updated only for the selected fields.
-     New tenants are added to the current month. By default, the source month&apos;s Current kWh becomes the new month&apos;s Previous kWh, Current stays blank, Status stays Unpaid, and proof stays blank.
+     New tenants are added to the current month. By default, the source month&apos;s Current kWh becomes the new month&apos;s Previous kWh, Current stays blank, Status stays Unpaid, and Other Charges stay blank unless selected above.
    </div>
 
    <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
@@ -978,7 +992,8 @@ async function performSelectiveTenantCopy(){
        current: '',
        price: '',
        status: 'Unpaid',
-       proof_url: ''
+       proof_url: '',
+       other_charges: {}
      });
      targetRow = tenantBody.rows[tenantBody.rows.length - 1];
    }
@@ -1018,12 +1033,8 @@ async function performSelectiveTenantCopy(){
      statusColor(statusSelect);
    }
 
-   if(selectedFields.includes('proof')){
-     targetRow.dataset.proofUrl = source.proof_url || '';
-     const proofLink = targetRow.querySelector('.proofLink');
-     proofLink.innerHTML = source.proof_url
-       ? `<a href="${escapeHtml(source.proof_url)}" target="_blank" style="color:#93c5fd">View</a>`
-       : '';
+   if(selectedFields.includes('otherCharges')){
+     setRowOtherCharges(targetRow, source.other_charges);
    }
 
    calc(currInput);
@@ -1047,7 +1058,7 @@ async function reflectForward(){
  const confirmed = confirm(
    `Reflect changes from ${sourceMonth} to all later months?\n\n` +
    `This will update tenant names, carry the CURRENT kWh into the next month as PREVIOUS kWh, and carry Price/kWh forward.\n\n` +
-   `Existing future Current kWh, Status, Proof, Notes, and other month-specific data will NOT be overwritten.`
+   `Existing future Current kWh, Status, Other Charges, and other month-specific data will NOT be overwritten.`
  );
 
  if(!confirmed) return;
@@ -1083,7 +1094,8 @@ async function reflectForward(){
      current_kwh: Number(row.querySelector('.curr').value || 0),
      price_per_kwh: Number(row.querySelector('.price').value || 0),
      status: row.querySelector('.status').value,
-     proof_url: row.dataset.proofUrl || ''
+     proof_url: row.dataset.proofUrl || '',
+     other_charges: getRowOtherCharges(row)
    }));
 
    const saved = await saveMonth();
@@ -1176,7 +1188,8 @@ async function reflectForward(){
              ...reflected,
              current_kwh: 0,
              status: 'Unpaid',
-             proof_url: ''
+             proof_url: '',
+             other_charges: {}
            })
            .select('*')
            .single();
@@ -1235,7 +1248,8 @@ const rows = [...tenantBody.rows].map((r,index) => ({
    current_kwh: Number(r.querySelector('.curr').value || 0),
    price_per_kwh: Number(r.querySelector('.price').value || 0),
    status: r.querySelector('.status').value,
-  proof_url:r.dataset.proofUrl || ''
+   proof_url:r.dataset.proofUrl || '',
+   other_charges:getRowOtherCharges(r)
  }));
 
  console.log("Saving rows:", rows);
@@ -1365,7 +1379,8 @@ function addSelectedTenantProfile(){
    current: '',
    price: '',
    status: 'Unpaid',
-   proof_url: ''
+   proof_url: '',
+   other_charges: {}
  });
  closeAddTenantProfileModal();
 }
@@ -1378,24 +1393,187 @@ function openTenantProfile(id,nickname){
  }
 }
 
-function deleteElecTenantRow(button){
- const row = button.closest('tr');
- const name = row.querySelector('.name')?.value || 'this tenant';
- if(confirm(`Delete ${name} from ${currentMonth()}?\n\nThis only removes the electricity row for the current month. It does NOT delete the Tenant Information profile.`)){
-   row.remove();
-   refreshTenantViewDropdown();
-   applyTrackerView();
- }
+function normalizeOtherCharges(value){
+  // Keep using the existing JSONB column for compatibility, but only one
+  // amount is used now: { other_charges: 123.45 }.
+  if(value == null || value === '') return { other_charges: 0 };
+
+  let parsed = value;
+  if(typeof value === 'string'){
+    try{ parsed = JSON.parse(value); }
+    catch(_){
+      const numeric = Number(value);
+      return { other_charges: Number.isFinite(numeric) ? Math.max(0,numeric) : 0 };
+    }
+  }
+
+  if(typeof parsed === 'number'){
+    return { other_charges: Number.isFinite(parsed) ? Math.max(0,parsed) : 0 };
+  }
+
+  const amount = Number(parsed?.other_charges || 0);
+  return {
+    other_charges: Number.isFinite(amount) ? Math.max(0,amount) : 0
+  };
+}
+
+function sumOtherCharges(value){
+  return Number(normalizeOtherCharges(value).other_charges || 0);
+}
+
+function getRowOtherCharges(row){
+  const current = normalizeOtherCharges(row?.dataset?.otherCharges || '{}');
+  if(!row) return current;
+
+  const input = row.querySelector('.other-charge-input');
+  if(input){
+    const amount = Number(input.value || 0);
+    current.other_charges = Number.isFinite(amount) ? Math.max(0,amount) : 0;
+  }
+
+  row.dataset.otherCharges = JSON.stringify(current);
+  return current;
+}
+
+function setRowOtherCharges(row, value){
+  if(!row) return;
+  const charge = normalizeOtherCharges(value);
+  row.dataset.otherCharges = JSON.stringify(charge);
+  const input = row.querySelector('.other-charge-input');
+  if(input){
+    input.value = Number(charge.other_charges || 0)
+      ? Number(charge.other_charges).toFixed(2)
+      : '';
+  }
+}
+
+function otherChargeChanged(input){
+  const row = input.closest('tr');
+  if(!row) return;
+  getRowOtherCharges(row);
+  calc(row.querySelector('.curr'));
+}
+
+function canEditCurrentTenantRow(row){
+  if(trackerViewMode === 'all') return true;
+  if(trackerViewMode === 'tenant'){
+    return tenantEditUnlocked && tenantRowViewKey(row) === selectedTenantViewKey;
+  }
+  return false;
+}
+
+function openDeleteTenantModal(){
+  const rows = [...tenantBody.rows];
+  if(rows.length === 0){ alert('There are no tenants in ' + currentMonth() + '.'); return; }
+  const overlay = document.createElement('div');
+  overlay.id = 'deleteTenantModal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <h2 style="margin-top:0;color:#fecaca">🗑 Delete Tenant from ${escapeHtml(currentMonth())}</h2>
+      <p style="color:#cbd5e1">Select one or more tenants. This removes only their electricity row for the selected month. Tenant Information and other months are not deleted.</p>
+      <label style="display:flex;align-items:center;gap:8px;margin:12px 0;width:max-content">
+        <input id="deleteTenantSelectAll" type="checkbox" style="width:auto" onchange="toggleDeleteTenantSelectAll(this.checked)"> Select All
+      </label>
+      <div style="display:grid;gap:8px;max-height:360px;overflow:auto">
+        ${rows.map((row,index) => `
+          <label style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.05);padding:10px;border-radius:9px">
+            <input class="delete-tenant-check" type="checkbox" value="${index}" style="width:auto">
+            <span>${escapeHtml(row.querySelector('.name')?.value || 'Unnamed Tenant')}</span>
+          </label>`).join('')}
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:16px">
+        <button onclick="closeDeleteTenantModal()" style="background:#475569">Cancel</button>
+        <button onclick="deleteSelectedTenants()" style="background:#dc2626">Delete Selected</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if(e.target === overlay) closeDeleteTenantModal(); });
+  document.body.appendChild(overlay);
+}
+
+function toggleDeleteTenantSelectAll(checked){ document.querySelectorAll('.delete-tenant-check').forEach(box => box.checked = checked); }
+function closeDeleteTenantModal(){ document.getElementById('deleteTenantModal')?.remove(); }
+
+async function deleteSelectedTenants(){
+  const selected = [...document.querySelectorAll('.delete-tenant-check:checked')]
+    .map(box => Number(box.value)).filter(Number.isInteger);
+  if(selected.length === 0){ alert('Select at least one tenant to delete.'); return; }
+  const rows = [...tenantBody.rows];
+  const names = selected.map(i => rows[i]?.querySelector('.name')?.value).filter(Boolean);
+  if(!confirm(`Delete ${names.length} selected tenant${names.length===1?'':'s'} from ${currentMonth()}?\n\n${names.join(', ')}\n\nThis does not delete Tenant Information or other months.`)) return;
+  selected.sort((a,b)=>b-a).forEach(i => rows[i]?.remove());
+  closeDeleteTenantModal();
+  refreshTenantViewDropdown();
+  applyTrackerView();
+  await saveMonth();
+  await loadMonth();
+}
+
+function openCalculator(){
+  if(document.getElementById('calculatorModal')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'calculatorModal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card" style="width:min(380px,100%)">
+      <h2 style="margin-top:0;color:#c4b5fd">🧮 Calculator</h2>
+      <input id="calcDisplay" class="calc-display" inputmode="decimal" autocomplete="off" placeholder="0">
+      <div class="calc-grid">
+        <button onclick="calculatorClear()" style="background:#dc2626">C</button>
+        <button onclick="calculatorBackspace()">⌫</button>
+        <button onclick="calculatorAppend('(')">(</button>
+        <button onclick="calculatorAppend(')')">)</button>
+        <button onclick="calculatorAppend('7')">7</button>
+        <button onclick="calculatorAppend('8')">8</button>
+        <button onclick="calculatorAppend('9')">9</button>
+        <button onclick="calculatorAppend('/')">÷</button>
+        <button onclick="calculatorAppend('4')">4</button>
+        <button onclick="calculatorAppend('5')">5</button>
+        <button onclick="calculatorAppend('6')">6</button>
+        <button onclick="calculatorAppend('*')">×</button>
+        <button onclick="calculatorAppend('1')">1</button>
+        <button onclick="calculatorAppend('2')">2</button>
+        <button onclick="calculatorAppend('3')">3</button>
+        <button onclick="calculatorAppend('-')">−</button>
+        <button onclick="calculatorAppend('0')">0</button>
+        <button onclick="calculatorAppend('.')">.</button>
+        <button onclick="calculatorEvaluate()" style="background:#16a34a">=</button>
+        <button onclick="calculatorAppend('+')">+</button>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:14px"><button onclick="closeCalculator()" style="background:#475569">Close</button></div>
+    </div>`;
+  overlay.addEventListener('click', e => { if(e.target === overlay) closeCalculator(); });
+  document.body.appendChild(overlay);
+  document.getElementById('calcDisplay')?.focus();
+}
+function closeCalculator(){ document.getElementById('calculatorModal')?.remove(); }
+function calculatorAppend(value){ const display=document.getElementById('calcDisplay'); if(display) display.value += value; }
+function calculatorClear(){ const display=document.getElementById('calcDisplay'); if(display) display.value=''; }
+function calculatorBackspace(){ const display=document.getElementById('calcDisplay'); if(display) display.value=display.value.slice(0,-1); }
+function calculatorEvaluate(){
+  const display=document.getElementById('calcDisplay'); if(!display) return;
+  const expression=String(display.value||'').trim(); if(!expression) return;
+  if(!/^[0-9+\-*/().\s]+$/.test(expression)){ display.value='Invalid'; return; }
+  try{
+    const result=Function('"use strict";return ('+expression+')')();
+    display.value=Number.isFinite(result)?String(Math.round((result+Number.EPSILON)*1000000)/1000000):'Invalid';
+  }catch(_){ display.value='Invalid'; }
 }
 
 function addTenantRow(t){
  let tr=document.createElement('tr');
  tr.dataset.id=t.id||('T'+Date.now()+Math.random());
  tr.dataset.tenantId=t.tenant_id||'';
+ tr.dataset.proofUrl=t.proof_url||'';
+ const charges = normalizeOtherCharges(t.other_charges);
+ tr.dataset.otherCharges=JSON.stringify(charges);
+
  const profileHref = t.tenant_id
    ? `tenants.html?id=${encodeURIComponent(t.tenant_id)}`
    : `tenants.html?nickname=${encodeURIComponent(t.name||'')}`;
+
  const displayName = t.name || 'Unnamed Tenant';
+
  tr.innerHTML=`
  <td>
    <input class="name" type="hidden" value="${escapeHtml(t.name||'')}">
@@ -1405,27 +1583,21 @@ function addTenantRow(t){
  <td><input class="curr kwh-input" type="number" value="${t.current||''}" oninput="calc(this)"></td>
  <td class="cons">0</td>
  <td><input class="price kwh-input" type="number" value="${t.price ?? ''}" oninput="calc(this)"></td>
+ <td class="charges-cell">
+   <input
+     class="other-charge-input"
+     type="number"
+     min="0"
+     step="0.01"
+     inputmode="decimal"
+     placeholder="0.00"
+     value="${Number(charges.other_charges||0) ? Number(charges.other_charges).toFixed(2) : ''}"
+     oninput="otherChargeChanged(this)"
+   >
+ </td>
  <td class="total">₱0.00</td>
- <td><select class="status" style="width:90%" onchange="statusColor(this)"><option>Unpaid</option><option>Paid</option></select></td>
-<td class="proof-cell">
+ <td><select class="status" onchange="statusColor(this)"><option>Unpaid</option><option>Paid</option></select></td>`;
 
-  <input
-    type="file"
-    class="proofFile"
-    accept="image/*"
-    capture="environment"
-    onchange="uploadProof(this)"
-      style="max-width:100px"
-  >
-
-  <div class="proofLink">
-    ${
-      t.proof_url
-      ? `<a href="${escapeHtml(t.proof_url)}" target="_blank" style="color:#93c5fd">View</a>`
-      : ''
-    }
-  </div>
-</td> <td class="action-col"><button onclick="deleteElecTenantRow(this)">Delete</button></td>`;
  tenantBody.appendChild(tr);
  tr.querySelector('.status').value=t.status||'Unpaid';
  statusColor(tr.querySelector('.status'));
@@ -1444,53 +1616,15 @@ function calc(el){
  let usedRounded=Math.round((used+Number.EPSILON)*100)/100;
 
  r.querySelector('.cons').innerText=usedRounded.toFixed(2);
- r.querySelector('.total').innerText='₱'+(usedRounded*pr).toFixed(2);
+ const energyCharge = usedRounded * pr;
+ const otherCharges = sumOtherCharges(getRowOtherCharges(r));
+ r.querySelector('.total').innerText='₱'+(energyCharge+otherCharges).toFixed(2);
 }
 
 function statusColor(s){s.className='status '+(s.value==='Paid'?'paid':'unpaid');}
 function filterTenants(){
   applyTrackerView();
 }
-async function uploadProof(input){
-
- const file = input.files[0];
-
- if(!file) return;
-
- const fileName =
-   Date.now() + "_" + file.name;
-
- const { error } =
- await supabaseClient.storage
-   .from('tenant-signatures')
-   .upload(fileName,file);
-
- if(error){
-   alert(error.message);
-   return;
- }
-
- const { data } =
- supabaseClient.storage
-   .from('tenant-signatures')
-   .getPublicUrl(fileName);
-
- const row = input.closest('tr');
-
- row.dataset.proofUrl =
-   data.publicUrl;
-
- input.nextElementSibling.innerHTML =
-   `<a href="${data.publicUrl}"
-       target="_blank"
-       style="color:#93c5fd">
-       View
-    </a>`;
-
- await saveMonth();
-}
-
-
 function safePdfFilePart(value){
   return String(value || '')
     .trim()
@@ -1544,13 +1678,15 @@ async function exportPDF(){
       const current = Number(row.current_kwh || 0);
       const price = Number(row.price_per_kwh || 0);
       const consumed = Math.max(0, current - previous);
+      const otherCharges = sumOtherCharges(row.other_charges);
       return [
         row.month || '',
         previous.toFixed(2),
         current.toFixed(2),
         consumed.toFixed(2),
         `PHP ${price.toFixed(2)}`,
-        `PHP ${(consumed * price).toFixed(2)}`,
+        `PHP ${otherCharges.toFixed(2)}`,
+        `PHP ${(consumed * price + otherCharges).toFixed(2)}`,
         row.status || ''
       ];
     });
@@ -1562,7 +1698,7 @@ async function exportPDF(){
 
     doc.autoTable({
       startY: 96,
-      head: [['Month','Previous kWh','Current kWh','Consumed','Price/kWh','Total Bill','Status']],
+      head: [['Month','Previous kWh','Current kWh','Consumed','Price/kWh','Other Charges','Total Bill','Status']],
       body,
       styles: { fontSize:9, cellPadding:5 },
       headStyles: { fontStyle:'bold' },
@@ -1606,7 +1742,7 @@ async function exportPDF(){
     const price = Number(row.querySelector('.price')?.value || 0);
     const consumed = Math.max(0, current - previous);
     const status = String(row.querySelector('.status')?.value || '');
-    const proof = row.dataset.proofUrl ? 'Available' : '-';
+    const otherCharges = sumOtherCharges(getRowOtherCharges(row));
 
     return [
       name,
@@ -1614,9 +1750,9 @@ async function exportPDF(){
       current.toFixed(2),
       consumed.toFixed(2),
       `PHP ${price.toFixed(2)}`,
-      `PHP ${(consumed * price).toFixed(2)}`,
-      status,
-      proof
+      `PHP ${otherCharges.toFixed(2)}`,
+      `PHP ${(consumed * price + otherCharges).toFixed(2)}`,
+      status
     ];
   });
 
@@ -1633,9 +1769,9 @@ async function exportPDF(){
       'Current kWh',
       'Consumed',
       'Price/kWh',
+      'Other Charges',
       'Total Bill',
-      'Status',
-      'Proof'
+      'Status'
     ]],
     body,
     styles: { fontSize:9, cellPadding:5 },
@@ -1742,7 +1878,8 @@ data.forEach(r=>{
     current:r.current_kwh,
     price:r.price_per_kwh,
     status:r.status,
-    proof_url:r.proof_url
+    proof_url:r.proof_url,
+    other_charges:r.other_charges || {}
   });
 
 });
