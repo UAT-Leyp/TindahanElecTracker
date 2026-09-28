@@ -205,6 +205,29 @@ body.history-view-mode .actions{display:none}
 body.history-view-mode .controls{display:none}
 body.history-view-mode #trackerTableSection{display:none}
  
+
+.month-lock-banner{display:none;margin:10px 0;padding:10px 12px;border:1px solid #f59e0b;border-radius:10px;background:rgba(245,158,11,.12);color:#fde68a;font-weight:700}
+.month-lock-banner.visible{display:block}
+#monthLockBtn.locked{background:#dc2626}
+#monthLockBtn.unlocked{background:#16a34a}
+.tenant-image-history{display:none;margin-top:16px;border:1px solid rgba(139,92,246,.55);background:#1d1233;border-radius:14px;padding:14px}
+body.tenant-view-mode .tenant-image-history.visible{display:block}
+.image-history-head{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px}
+.image-history-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.image-history-controls select{width:auto;min-width:170px}
+.meter-photo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.meter-photo-card{background:#12091F;border:1px solid rgba(255,255,255,.12);border-radius:12px;overflow:hidden}
+.meter-photo-card img{display:block;width:100%;height:170px;object-fit:cover;background:#05030a}
+.meter-photo-placeholder{height:170px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;color:#cbd5e1;background:#090414}
+.meter-photo-body{padding:10px;display:grid;gap:6px;font-size:13px}
+.meter-photo-meta{color:#cbd5e1;font-size:12px;line-height:1.45}
+.progress-list{display:grid;gap:8px;max-height:55vh;overflow:auto;margin-top:12px}
+.progress-row{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:rgba(255,255,255,.05)}
+.progress-row.done{background:rgba(34,197,94,.13);border:1px solid rgba(34,197,94,.35)}
+.progress-check{font-size:20px;width:28px;text-align:center}
+.offline-ready-list{display:grid;gap:8px;margin:12px 0}
+.offline-ready-item{padding:9px 10px;border-radius:9px;background:rgba(255,255,255,.05)}
+
 @media(max-width:768px){
  .controls,.actions{flex-direction:column}
  .tenant-view-picker,.history-view-picker{align-items:stretch;flex-direction:column}
@@ -244,6 +267,9 @@ body.history-view-mode #trackerTableSection{display:none}
 <button onclick="saveMonth()">Save Data</button>
 <button onclick="exportBackup()">💾 Export Backup (JSON)</button>
 <button onclick="openDeleteTenantModal()" style="background:#dc2626">🗑 Delete Tenant</button>
+<button id="monthLockBtn" type="button" onclick="toggleMonthLock()">🔒 Lock Month</button>
+<button type="button" onclick="openReadingProgress()">✅ Reading Progress</button>
+<button type="button" onclick="prepareOfflineReadings()">📦 Offline Reading Checklist</button>
 
 <input
   type="text"
@@ -258,6 +284,7 @@ body.history-view-mode #trackerTableSection{display:none}
 <div style="margin-top:8px;min-height:28px;">
   <span id="saveStatus" class="save-status" role="status" aria-live="polite"></span>
 </div>
+<div id="monthLockBanner" class="month-lock-banner">🔒 This month is locked. Editing is disabled until the owner unlocks it.</div>
 
 <div class="card">
 <div class="view-switcher" aria-label="Electricity tracker view mode">
@@ -321,6 +348,22 @@ body.history-view-mode #trackerTableSection{display:none}
 <tbody id="tenantBody"></tbody>
 </table>
 </div>
+</div>
+
+<div id="tenantImageHistoryPanel" class="tenant-image-history">
+  <div class="image-history-head">
+    <div>
+      <h2 style="margin:0 0 4px">📷 Image History</h2>
+      <div style="font-size:12px;color:#cbd5e1">Meter reading photos are private to the selected Tenant View.</div>
+    </div>
+    <div class="image-history-controls">
+      <label for="imageHistoryMonthSelect" style="font-weight:700">Month:</label>
+      <select id="imageHistoryMonthSelect" onchange="loadMeterPhotoHistory(true)"></select>
+      <button type="button" onclick="openMeterPhotoModal()">➕ Add Meter Photo</button>
+    </div>
+  </div>
+  <div id="meterPhotoGrid" class="meter-photo-grid"></div>
+  <div id="meterPhotoEmpty" class="history-empty" style="display:none">No meter reading photos for this tenant and month.</div>
 </div>
 </div>
 
@@ -1943,6 +1986,271 @@ if(
   // use the cached list while the device is offline.
   try{ await loadTenantProfilesForElec(); }catch(error){ console.warn(error); }
 });
+</script>
+
+<script>
+// ============================================================
+// Meter Photos + Reading Progress + Monthly Lock + Offline Prep
+// ============================================================
+let currentMonthLocked=false;
+let currentMonthLockRow=null;
+let meterPhotoRows=[];
+let meterPhotoLoadKey='';
+let editingMeterPhotoId=null;
+const localMeterPhotoPreviews=new Map();
+
+function selectedTenantRow(){
+  if(trackerViewMode!=='tenant' || !selectedTenantViewKey) return null;
+  return [...tenantBody.rows].find(row=>tenantRowViewKey(row)===selectedTenantViewKey)||null;
+}
+function selectedTenantIdentity(){
+  const row=selectedTenantRow();
+  if(!row)return null;
+  return {
+    tenantId:String(row.dataset.tenantId||'').trim(),
+    name:String(row.querySelector('.name')?.value||'').trim(),
+    row
+  };
+}
+function safePathPart(value){return String(value||'').trim().replace(/[^a-z0-9_-]+/gi,'_').replace(/^_+|_+$/g,'')||'item';}
+
+function fillImageHistoryMonths(){
+  const sel=document.getElementById('imageHistoryMonthSelect');
+  if(!sel)return;
+  const wanted=sel.value||currentMonth();
+  sel.innerHTML=months().map(m=>`<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+  sel.value=months().includes(wanted)?wanted:currentMonth();
+}
+
+function refreshImageHistoryVisibility(){
+  const panel=document.getElementById('tenantImageHistoryPanel');
+  if(!panel)return;
+  const show=trackerViewMode==='tenant' && Boolean(selectedTenantViewKey);
+  panel.classList.toggle('visible',show);
+  if(!show)return;
+  fillImageHistoryMonths();
+  loadMeterPhotoHistory(false);
+}
+
+async function loadMeterPhotoHistory(force=false){
+  const identity=selectedTenantIdentity();
+  const grid=document.getElementById('meterPhotoGrid');
+  const empty=document.getElementById('meterPhotoEmpty');
+  if(!grid||!empty)return;
+  if(!identity){grid.innerHTML='';empty.style.display='block';empty.textContent='Select a tenant first.';return;}
+  if(!identity.tenantId){grid.innerHTML='';empty.style.display='block';empty.textContent='This electricity row is not linked to a Tenant Information profile yet.';return;}
+  const month=document.getElementById('imageHistoryMonthSelect')?.value||currentMonth();
+  const key=`${identity.tenantId}|${month}`;
+  if(!force && meterPhotoLoadKey===key)return;
+  meterPhotoLoadKey=key;
+  const {data,error}=await supabaseClient.from('elec_meter_reading_photos')
+    .select('*').eq('tenant_id',identity.tenantId).eq('month',month).order('captured_at',{ascending:false});
+  if(error){console.error(error);grid.innerHTML='';empty.style.display='block';empty.textContent='Could not load image history: '+error.message;return;}
+  meterPhotoRows=data||[];
+  renderMeterPhotoHistory();
+}
+
+function renderMeterPhotoHistory(){
+  const grid=document.getElementById('meterPhotoGrid');
+  const empty=document.getElementById('meterPhotoEmpty');
+  if(!grid||!empty)return;
+  if(!meterPhotoRows.length){grid.innerHTML='';empty.style.display='block';empty.textContent='No meter reading photos for this tenant and month.';return;}
+  empty.style.display='none';
+  grid.innerHTML=meterPhotoRows.map(p=>{
+    const preview=localMeterPhotoPreviews.get(p.storage_path)||p.image_url||'';
+    const timestamp=p.captured_at?new Date(p.captured_at).toLocaleString('en-PH'):'—';
+    return `<div class="meter-photo-card">
+      ${preview?`<a href="${escapeHtml(preview)}" target="_blank" rel="noopener"><img src="${escapeHtml(preview)}" alt="Meter reading photo" onerror="this.closest('.meter-photo-card').querySelector('.meter-photo-placeholder-fallback')?.style.setProperty('display','flex');this.style.display='none'"></a>`:''}
+      <div class="meter-photo-placeholder meter-photo-placeholder-fallback" style="display:${preview?'none':'flex'}">${navigator.onLine?'Photo unavailable':'Photo queued offline — it will appear after sync.'}</div>
+      <div class="meter-photo-body">
+        <strong>${escapeHtml(p.month||'')}</strong>
+        <div>Reading: <strong>${p.reading_kwh===null||p.reading_kwh===undefined?'—':Number(p.reading_kwh).toFixed(2)+' kWh'}</strong></div>
+        <div>${escapeHtml(p.notes||'No notes')}</div>
+        <div class="meter-photo-meta">Taken by: ${escapeHtml(p.reading_taken_by||'—')}<br>Timestamp: ${escapeHtml(timestamp)}</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap"><button type="button" onclick="openMeterPhotoModal('${p.id}')">Edit</button><button type="button" onclick="deleteMeterPhoto('${p.id}')" style="background:#dc2626">Delete</button></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openMeterPhotoModal(id=null){
+  const identity=selectedTenantIdentity();
+  if(!identity?.tenantId){alert('Select a linked tenant first.');return;}
+  editingMeterPhotoId=id;
+  const p=id?meterPhotoRows.find(x=>x.id===id):null;
+  const month=document.getElementById('imageHistoryMonthSelect')?.value||currentMonth();
+  const defaultTakenBy=p?.reading_taken_by||localStorage.getItem('elec_reading_taken_by')||'';
+  document.getElementById('meterPhotoModal')?.remove();
+  const overlay=document.createElement('div');overlay.id='meterPhotoModal';overlay.className='modal-overlay';
+  overlay.innerHTML=`<div class="modal-card" style="width:min(620px,100%)">
+    <h2 style="margin-top:0;color:#c4b5fd">${p?'✏️ Edit':'📷 Add'} Meter Reading Photo</h2>
+    <div style="display:grid;gap:10px">
+      <label>Tenant<input value="${escapeHtml(identity.name)}" disabled></label>
+      <label>Month<input value="${escapeHtml(month)}" disabled></label>
+      <label>${p?'Replace Photo (optional)':'Meter Photo'}<input id="meterPhotoFile" type="file" accept="image/*" capture="environment" ${p?'':'required'}></label>
+      <label>Reading Taken By<input id="meterPhotoTakenBy" value="${escapeHtml(defaultTakenBy)}" placeholder="Name of person who took the reading"></label>
+      <label>Notes<textarea id="meterPhotoNotes" rows="4" style="width:100%;box-sizing:border-box;padding:9px;border-radius:9px;background:#12091F;color:#fff;border:1px solid #8B5CF6" placeholder="Optional notes about the meter or reading">${escapeHtml(p?.notes||'')}</textarea></label>
+      <div style="font-size:12px;color:#cbd5e1">Timestamp is added automatically when the photo is first saved.</div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap">
+      <button type="button" onclick="closeMeterPhotoModal()" style="background:#475569">Cancel</button>
+      <button type="button" onclick="saveMeterPhoto()">💾 Save</button>
+    </div>
+  </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)closeMeterPhotoModal();});document.body.appendChild(overlay);
+}
+function closeMeterPhotoModal(){document.getElementById('meterPhotoModal')?.remove();editingMeterPhotoId=null;}
+
+async function saveMeterPhoto(){
+  const identity=selectedTenantIdentity();if(!identity?.tenantId)return;
+  const existing=editingMeterPhotoId?meterPhotoRows.find(x=>x.id===editingMeterPhotoId):null;
+  const file=document.getElementById('meterPhotoFile')?.files?.[0]||null;
+  if(!existing && !file){alert('Choose a meter photo.');return;}
+  const month=document.getElementById('imageHistoryMonthSelect')?.value||currentMonth();
+  const takenBy=document.getElementById('meterPhotoTakenBy')?.value.trim()||'';
+  const notes=document.getElementById('meterPhotoNotes')?.value.trim()||'';
+  if(takenBy)localStorage.setItem('elec_reading_taken_by',takenBy);
+  let imageUrl=existing?.image_url||'';
+  let storagePath=existing?.storage_path||'';
+  if(file){
+    const ext=(file.name.split('.').pop()||'jpg').replace(/[^a-zA-Z0-9]/g,'')||'jpg';
+    const newPath=`meter-readings/${identity.tenantId}/${safePathPart(month)}/${Date.now()}.${ext}`;
+    const {error:uploadError}=await supabaseClient.storage.from('tenant-files').upload(newPath,file,{upsert:false});
+    if(uploadError){alert('Photo upload failed: '+uploadError.message);return;}
+    const {data}=supabaseClient.storage.from('tenant-files').getPublicUrl(newPath);
+    imageUrl=data.publicUrl;storagePath=newPath;
+    localMeterPhotoPreviews.set(newPath,URL.createObjectURL(file));
+    if(existing?.storage_path && existing.storage_path!==newPath) await supabaseClient.storage.from('tenant-files').remove([existing.storage_path]);
+  }
+  const readingRaw=identity.row.querySelector('.curr')?.value;
+  const reading=readingRaw===''||readingRaw===undefined?null:Number(readingRaw);
+  const payload={tenant_id:identity.tenantId,tenant_name:identity.name,month,image_url:imageUrl,storage_path:storagePath,notes:notes||null,reading_taken_by:takenBy||null,reading_kwh:Number.isFinite(reading)?reading:null};
+  let result;
+  if(existing){result=await supabaseClient.from('elec_meter_reading_photos').update(payload).eq('id',existing.id).select('*').single();}
+  else{result=await supabaseClient.from('elec_meter_reading_photos').insert({...payload,captured_at:new Date().toISOString()}).select('*').single();}
+  if(result.error){alert(result.error.message);return;}
+  closeMeterPhotoModal();meterPhotoLoadKey='';await loadMeterPhotoHistory(true);showSaved();
+}
+
+async function deleteMeterPhoto(id){
+  const p=meterPhotoRows.find(x=>x.id===id);if(!p)return;
+  if(!confirm('Delete this meter reading photo and its notes?'))return;
+  if(p.storage_path)await supabaseClient.storage.from('tenant-files').remove([p.storage_path]);
+  const {error}=await supabaseClient.from('elec_meter_reading_photos').delete().eq('id',id);
+  if(error){alert(error.message);return;}
+  localMeterPhotoPreviews.delete(p.storage_path);meterPhotoLoadKey='';await loadMeterPhotoHistory(true);showSaved();
+}
+
+function readingProgressRows(){
+  return [...tenantBody.rows].map(row=>{
+    const name=String(row.querySelector('.name')?.value||'Unnamed Tenant');
+    const current=String(row.querySelector('.curr')?.value??'').trim();
+    const done=current!=='' && Number(current)>0;
+    return {name,current,done};
+  });
+}
+function openReadingProgress(){
+  document.getElementById('readingProgressModal')?.remove();
+  const rows=readingProgressRows();const done=rows.filter(x=>x.done).length;
+  const overlay=document.createElement('div');overlay.id='readingProgressModal';overlay.className='modal-overlay';
+  overlay.innerHTML=`<div class="modal-card" style="width:min(620px,100%)">
+    <h2 style="margin-top:0;color:#c4b5fd">✅ Reading Progress — ${escapeHtml(currentMonth())}</h2>
+    <div style="font-size:18px;font-weight:800">${done} / ${rows.length} completed • ${rows.length-done} remaining</div>
+    <div class="progress-list">${rows.map(x=>`<div class="progress-row ${x.done?'done':''}"><span class="progress-check">${x.done?'✅':'⬜'}</span><div style="flex:1"><strong>${escapeHtml(x.name)}</strong><div style="font-size:12px;color:#cbd5e1">${x.done?`Current reading: ${escapeHtml(x.current)} kWh`:'Current reading not entered yet'}</div></div></div>`).join('')}</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button onclick="document.getElementById('readingProgressModal')?.remove()" style="background:#475569">Close</button></div>
+  </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});document.body.appendChild(overlay);
+}
+
+async function loadMonthLock(){
+  const month=currentMonth();
+  const {data,error}=await supabaseClient.from('elec_month_locks').select('*').eq('month',month);
+  if(error){console.error('Month lock load failed:',error);currentMonthLocked=false;currentMonthLockRow=null;updateMonthLockUI();return;}
+  currentMonthLockRow=(data||[])[0]||null;currentMonthLocked=Boolean(currentMonthLockRow?.locked);updateMonthLockUI();applyTrackerView();
+}
+function updateMonthLockUI(){
+  const btn=document.getElementById('monthLockBtn');const banner=document.getElementById('monthLockBanner');
+  if(btn){btn.textContent=currentMonthLocked?'🔓 Unlock Month':'🔒 Lock Month';btn.classList.toggle('locked',currentMonthLocked);btn.classList.toggle('unlocked',!currentMonthLocked);}
+  if(banner){banner.classList.toggle('visible',currentMonthLocked);banner.textContent=currentMonthLocked?`🔒 ${currentMonth()} is locked${currentMonthLockRow?.locked_by?' by '+currentMonthLockRow.locked_by:''}. Editing is disabled until the owner unlocks it.`:'';}
+  document.querySelectorAll('.actions button').forEach(b=>{
+    const action=b.getAttribute('onclick')||'';
+    if(/addTenant\(|openCopyMonthModal\(|reflectForward\(|saveMonth\(|openDeleteTenantModal\(/.test(action)) b.disabled=currentMonthLocked;
+  });
+}
+async function toggleMonthLock(){
+  if(currentMonthLocked){
+    if(!confirm(`Unlock ${currentMonth()} for editing?`))return;
+    const {error}=await supabaseClient.from('elec_month_locks').upsert({month:currentMonth(),locked:false,locked_at:null,locked_by:null,updated_at:new Date().toISOString()},{onConflict:'month'});
+    if(error){alert(error.message);return;}currentMonthLocked=false;currentMonthLockRow=null;updateMonthLockUI();applyTrackerView();showSaved();return;
+  }
+  if(!confirm(`Lock ${currentMonth()}?\n\nOnce locked, meter readings, price, other charges, status, Add Tenant, Reflect, Copy, and Delete Tenant are disabled until you unlock the month.`))return;
+  const saved=await _saveMonthBeforeFeatureWrap({force:true});if(saved===false)return;
+  const by=prompt('Locked by (optional):',localStorage.getItem('elec_lock_name')||'')||'';if(by)localStorage.setItem('elec_lock_name',by);
+  const row={month:currentMonth(),locked:true,locked_at:new Date().toISOString(),locked_by:by||null,updated_at:new Date().toISOString()};
+  const {error}=await supabaseClient.from('elec_month_locks').upsert(row,{onConflict:'month'});if(error){alert(error.message);return;}
+  currentMonthLocked=true;currentMonthLockRow=row;setTenantEditingUnlocked(false);updateMonthLockUI();applyTrackerView();showSaved();
+}
+
+async function prepareOfflineReadings(){
+  if(!navigator.onLine){alert('You are currently offline. Connect to the internet first, then run Offline Reading Checklist before going room-to-room.');return;}
+  document.getElementById('offlinePrepModal')?.remove();
+  const overlay=document.createElement('div');overlay.id='offlinePrepModal';overlay.className='modal-overlay';
+  overlay.innerHTML=`<div class="modal-card" style="width:min(620px,100%)"><h2 style="margin-top:0;color:#c4b5fd">📦 Offline Reading Checklist</h2><div id="offlinePrepBody"><div class="offline-ready-item">⏳ Preparing ${escapeHtml(currentMonth())} for offline use…</div></div></div>`;
+  document.body.appendChild(overlay);
+  const body=overlay.querySelector('#offlinePrepBody');const results=[];
+  try{
+    if(window.Offline424)await window.Offline424.syncNow();
+    const checks=[
+      ['Electricity rows',supabaseClient.from('elec_tenant_bills').select('*').eq('month',currentMonth())],
+      ['Tenant profiles',supabaseClient.from('tenant_profiles').select('*')],
+      ['Month lock status',supabaseClient.from('elec_month_locks').select('*')],
+      ['Meter photo history',supabaseClient.from('elec_meter_reading_photos').select('*').eq('month',currentMonth())]
+    ];
+    let tenantCount=0;
+    let offlineTenantNames=[];
+    for(const [label,promise] of checks){
+      const r=await promise;if(r.error)throw r.error;
+      if(label==='Electricity rows'){tenantCount=(r.data||[]).length;offlineTenantNames=(r.data||[]).map(x=>x.tenant_name||'Unnamed Tenant');}
+      results.push(`✅ ${label} cached`);
+    }
+    if('caches' in window){
+      const cache=await caches.open('424-systems-offline-v2');
+      for(const url of ['./electricity.html','./tenants.html','./offline-sync.js','./manifest.webmanifest']){try{await cache.add(url);}catch(e){console.warn(e);}}
+      results.push('✅ App files cached');
+    }
+    const stamp=new Date().toISOString();localStorage.setItem('elec_offline_prepared_at',stamp);localStorage.setItem('elec_offline_prepared_month',currentMonth());
+    body.innerHTML=`<div style="font-size:18px;font-weight:800;color:#86efac">✓ Ready for offline meter readings</div><div class="offline-ready-list">${results.map(x=>`<div class="offline-ready-item">${x}</div>`).join('')}<div class="offline-ready-item"><strong>✅ ${tenantCount} tenant${tenantCount===1?'':'s'} ready for ${escapeHtml(currentMonth())}</strong><div style="margin-top:7px;display:grid;gap:4px">${offlineTenantNames.map(name=>`<span>☑ ${escapeHtml(name)}</span>`).join('')}</div></div></div><div style="font-size:12px;color:#cbd5e1">You can now disconnect from Wi‑Fi and enter Current kWh. Changes will remain on this device and sync when internet returns.</div><div style="display:flex;justify-content:flex-end;margin-top:14px"><button onclick="document.getElementById('offlinePrepModal')?.remove()" style="background:#475569">Close</button></div>`;
+  }catch(error){console.error(error);body.innerHTML=`<div style="color:#fecaca;font-weight:800">⚠ Preparation failed</div><p>${escapeHtml(error?.message||error)}</p><button onclick="document.getElementById('offlinePrepModal')?.remove()" style="background:#475569">Close</button>`;}
+}
+
+// Wrap existing functions without removing the tracker features already in use.
+const _saveMonthBeforeFeatureWrap=saveMonth;
+saveMonth=async function(options={}){
+  if(currentMonthLocked && !options.force){showSaved();return true;}
+  return _saveMonthBeforeFeatureWrap(options);
+};
+const _scheduleElecAutoSaveBeforeFeatureWrap=scheduleElecAutoSave;
+scheduleElecAutoSave=function(){if(currentMonthLocked)return;return _scheduleElecAutoSaveBeforeFeatureWrap();};
+const _setRowTenantReadOnlyBeforeFeatureWrap=setRowTenantReadOnly;
+setRowTenantReadOnly=function(row,readOnly){return _setRowTenantReadOnlyBeforeFeatureWrap(row,Boolean(readOnly)||currentMonthLocked);};
+const _applyTrackerViewBeforeFeatureWrap=applyTrackerView;
+applyTrackerView=function(){_applyTrackerViewBeforeFeatureWrap();if(currentMonthLocked){[...tenantBody.rows].forEach(row=>setRowTenantReadOnly(row,true));}updateMonthLockUI();refreshImageHistoryVisibility();};
+const _toggleTenantEditingBeforeFeatureWrap=toggleTenantEditing;
+toggleTenantEditing=async function(){if(currentMonthLocked){alert(`${currentMonth()} is locked. Unlock the month first.`);return;}return _toggleTenantEditingBeforeFeatureWrap();};
+const _addTenantBeforeFeatureWrap=addTenant;
+addTenant=function(){if(currentMonthLocked){alert(`${currentMonth()} is locked.`);return;}return _addTenantBeforeFeatureWrap();};
+const _openCopyMonthModalBeforeFeatureWrap=openCopyMonthModal;
+openCopyMonthModal=function(){if(currentMonthLocked){alert(`${currentMonth()} is locked.`);return;}return _openCopyMonthModalBeforeFeatureWrap();};
+const _reflectForwardBeforeFeatureWrap=reflectForward;
+reflectForward=async function(){if(currentMonthLocked){alert(`${currentMonth()} is locked.`);return;}return _reflectForwardBeforeFeatureWrap();};
+const _openDeleteTenantModalBeforeFeatureWrap=openDeleteTenantModal;
+openDeleteTenantModal=function(){if(currentMonthLocked){alert(`${currentMonth()} is locked.`);return;}return _openDeleteTenantModalBeforeFeatureWrap();};
+const _selectTenantViewBeforeFeatureWrap=selectTenantView;
+selectTenantView=function(value){_selectTenantViewBeforeFeatureWrap(value);meterPhotoLoadKey='';refreshImageHistoryVisibility();};
+const _setTrackerViewBeforeFeatureWrap=setTrackerView;
+setTrackerView=async function(mode){await _setTrackerViewBeforeFeatureWrap(mode);meterPhotoLoadKey='';refreshImageHistoryVisibility();};
+const _loadMonthBeforeFeatureWrap=loadMonth;
+loadMonth=async function(){const r=await _loadMonthBeforeFeatureWrap();fillImageHistoryMonths();meterPhotoLoadKey='';await loadMonthLock();refreshImageHistoryVisibility();return r;};
 </script>
 
 </body>

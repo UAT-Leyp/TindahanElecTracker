@@ -385,6 +385,7 @@ let currentOtherInfo=[];
 let currentTags=[];
 let currentSections=[];
 let currentRoomTransfers=[];
+let currentEmergencyContacts=[];
 let rooms=[];
 let editingOtherInfoId=null;
 let editingRoomId=null;
@@ -392,6 +393,7 @@ let editingQuestionId=null;
 let questionTenantContext=null;
 let pendingQuestionSectionId=null;
 let editingTransferId=null;
+let editingEmergencyContactId=null;
 let saveStatusTimer=null;
 
 function escapeHtml(value){
@@ -511,6 +513,7 @@ async function openTenantModal(mode,id=null){
   currentTags=[];
   currentSections=[];
   currentRoomTransfers=[];
+  currentEmergencyContacts=[];
 
   let tenant=blankTenant();
   if(id){
@@ -530,16 +533,17 @@ async function openTenantModal(mode,id=null){
 }
 
 async function loadTenantExtras(tenantId){
-  const [qRes,aRes,attRes,infoRes,tagsRes,sectionsRes,transferRes]=await Promise.all([
+  const [qRes,aRes,attRes,infoRes,tagsRes,sectionsRes,transferRes,contactRes]=await Promise.all([
     supabaseClient.from('tenant_questions').select('*').or(`scope.eq.all,tenant_id.eq.${tenantId}`).order('sort_order').order('created_at'),
     supabaseClient.from('tenant_answers').select('*').eq('tenant_id',tenantId),
     supabaseClient.from('tenant_attachments').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:false}),
     supabaseClient.from('tenant_other_information').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:true}),
     supabaseClient.from('tenant_tags').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:true}),
     supabaseClient.from('tenant_custom_sections').select('*').or(`scope.eq.all,tenant_id.eq.${tenantId}`).order('sort_order').order('created_at'),
-    supabaseClient.from('tenant_room_transfers').select('*').eq('tenant_id',tenantId).order('transferred_at',{ascending:false})
+    supabaseClient.from('tenant_room_transfers').select('*').eq('tenant_id',tenantId).order('transferred_at',{ascending:false}),
+    supabaseClient.from('tenant_emergency_contacts').select('*').eq('tenant_id',tenantId).order('display_order',{ascending:true}).order('created_at',{ascending:true})
   ]);
-  for(const r of [qRes,aRes,attRes,infoRes,tagsRes,sectionsRes,transferRes]) if(r.error) console.error(r.error);
+  for(const r of [qRes,aRes,attRes,infoRes,tagsRes,sectionsRes,transferRes,contactRes]) if(r.error) console.error(r.error);
   currentQuestions=qRes.data||[];
   currentAnswers=Object.fromEntries((aRes.data||[]).map(a=>[a.question_id,a.answer_value??'']));
   currentAttachments=attRes.data||[];
@@ -547,6 +551,7 @@ async function loadTenantExtras(tenantId){
   currentTags=tagsRes.data||[];
   currentSections=sectionsRes.data||[];
   currentRoomTransfers=transferRes.data||[];
+  currentEmergencyContacts=contactRes.data||[];
 }
 
 function renderTenantFooter(mode,id){
@@ -605,12 +610,8 @@ function renderEditForm(t){
     </div>
 
     <div class="section">
-      <div class="section-title"><h3>Emergency Contact</h3></div>
-      <div class="grid three">
-        ${field('Contact Name','emergency_contact_name',t.emergency_contact_name)}
-        ${field('Contact Number','emergency_contact_number',t.emergency_contact_number)}
-        ${field('Relationship','emergency_contact_relationship',t.emergency_contact_relationship)}
-      </div>
+      <div class="section-title"><h3>Emergency Contacts</h3>${t.id?`<button type="button" class="small" onclick="openEmergencyContactModal()">➕ Add Contact</button>`:''}</div>
+      ${t.id?`<div id="emergencyContactsEdit">${renderEmergencyContacts()}</div>`:'<div class="notice">Save this tenant first before adding emergency contacts.</div>'}
     </div>
 
     <div class="section">
@@ -696,12 +697,8 @@ function renderView(t){
     </div>
 
     <div class="section">
-      <div class="section-title"><h3>Emergency Contact</h3></div>
-      <div class="grid three">
-        ${readBox('Contact Name',t.emergency_contact_name)}
-        ${readBox('Contact Number',t.emergency_contact_number)}
-        ${readBox('Relationship',t.emergency_contact_relationship)}
-      </div>
+      <div class="section-title"><h3>Emergency Contacts</h3><button type="button" class="small" onclick="openEmergencyContactModal()">➕ Add Contact</button></div>
+      <div id="emergencyContactsView">${renderEmergencyContacts()}</div>
     </div>
 
     <div class="section">
@@ -739,6 +736,104 @@ function renderView(t){
       <div class="attachment-list" id="attachmentListView"></div>
     </div>
   `;
+}
+
+function renderEmergencyContacts(){
+  if(!currentEmergencyContacts.length) return '<div class="empty">No emergency contacts added.</div>';
+  return `<div class="other-info-list">${currentEmergencyContacts.map((c,index)=>`
+    <div class="other-info-row">
+      <div>
+        <strong>${escapeHtml(c.contact_name||'Unnamed Contact')}</strong>
+        ${c.is_primary?'<span class="badge active" style="margin-left:6px">Primary</span>':''}
+        <div class="attachment-meta">${escapeHtml(c.relationship||'No relationship specified')} • ${escapeHtml(c.contact_number||'No number')}</div>
+        ${c.notes?`<div style="margin-top:5px">${escapeHtml(c.notes)}</div>`:''}
+      </div>
+      <div class="custom-actions">
+        <button type="button" class="small" onclick="openEmergencyContactModal('${c.id}')">Edit</button>
+        <button type="button" class="small danger" onclick="deleteEmergencyContact('${c.id}')">Delete</button>
+      </div>
+    </div>`).join('')}</div>`;
+}
+
+function refreshEmergencyContactsUI(){
+  const html=renderEmergencyContacts();
+  const edit=document.getElementById('emergencyContactsEdit');
+  const view=document.getElementById('emergencyContactsView');
+  if(edit) edit.innerHTML=html;
+  if(view) view.innerHTML=html;
+}
+
+function openEmergencyContactModal(id=null){
+  if(!currentTenantId){alert('Save the tenant first.');return;}
+  editingEmergencyContactId=id;
+  const c=id?currentEmergencyContacts.find(x=>x.id===id):null;
+  document.getElementById('emergencyContactModal')?.remove();
+  const overlay=document.createElement('div');
+  overlay.id='emergencyContactModal';
+  overlay.className='modal open';
+  overlay.innerHTML=`
+    <div class="modal-card" style="max-width:620px">
+      <div class="modal-head"><h2>${c?'✏️ Edit':'➕ Add'} Emergency Contact</h2><button class="secondary small" onclick="closeEmergencyContactModal()">✕</button></div>
+      <div class="modal-body">
+        <div class="grid">
+          <div class="field"><label class="required">Contact Name</label><input id="ec_name" value="${escapeHtml(c?.contact_name||'')}"></div>
+          <div class="field"><label>Contact Number</label><input id="ec_number" value="${escapeHtml(c?.contact_number||'')}"></div>
+          <div class="field"><label>Relationship</label><input id="ec_relationship" value="${escapeHtml(c?.relationship||'')}" placeholder="Example: Mother, Brother, Spouse"></div>
+          <div class="field"><label>Primary Contact</label><select id="ec_primary"><option value="false" ${!c?.is_primary?'selected':''}>No</option><option value="true" ${c?.is_primary?'selected':''}>Yes</option></select></div>
+          <div class="field full"><label>Notes</label><textarea id="ec_notes">${escapeHtml(c?.notes||'')}</textarea></div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        ${c?`<button class="danger" style="margin-right:auto" onclick="deleteEmergencyContact('${c.id}')">🗑 Delete</button>`:''}
+        <button class="secondary" onclick="closeEmergencyContactModal()">Cancel</button>
+        <button onclick="saveEmergencyContact()">💾 Save Contact</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)closeEmergencyContactModal();});
+  document.body.appendChild(overlay);
+}
+function closeEmergencyContactModal(){document.getElementById('emergencyContactModal')?.remove();editingEmergencyContactId=null;}
+
+async function saveEmergencyContact(){
+  if(!currentTenantId)return;
+  const name=document.getElementById('ec_name')?.value.trim()||'';
+  if(!name){alert('Contact Name is required.');return;}
+  const payload={
+    tenant_id:currentTenantId,
+    contact_name:name,
+    contact_number:document.getElementById('ec_number')?.value.trim()||null,
+    relationship:document.getElementById('ec_relationship')?.value.trim()||null,
+    notes:document.getElementById('ec_notes')?.value.trim()||null,
+    is_primary:document.getElementById('ec_primary')?.value==='true',
+    display_order:editingEmergencyContactId
+      ? Number(currentEmergencyContacts.find(x=>x.id===editingEmergencyContactId)?.display_order||0)
+      : currentEmergencyContacts.length
+  };
+  showStatus('Saving contact...');
+  if(payload.is_primary){
+    for(const existing of currentEmergencyContacts.filter(x=>x.id!==editingEmergencyContactId && x.is_primary)){
+      await supabaseClient.from('tenant_emergency_contacts').update({is_primary:false}).eq('id',existing.id);
+    }
+  }
+  let result;
+  if(editingEmergencyContactId){
+    result=await supabaseClient.from('tenant_emergency_contacts').update(payload).eq('id',editingEmergencyContactId).select('*').single();
+  }else{
+    result=await supabaseClient.from('tenant_emergency_contacts').insert(payload).select('*').single();
+  }
+  if(result.error){console.error(result.error);showStatus('Contact save failed',true);alert(result.error.message);return;}
+  const refresh=await supabaseClient.from('tenant_emergency_contacts').select('*').eq('tenant_id',currentTenantId).order('display_order').order('created_at');
+  if(!refresh.error)currentEmergencyContacts=refresh.data||[];
+  closeEmergencyContactModal();refreshEmergencyContactsUI();showStatus('✓ Contact saved');
+}
+
+async function deleteEmergencyContact(id){
+  const c=currentEmergencyContacts.find(x=>x.id===id);if(!c)return;
+  if(!confirm(`Delete emergency contact "${c.contact_name}"?`))return;
+  const {error}=await supabaseClient.from('tenant_emergency_contacts').delete().eq('id',id);
+  if(error){alert(error.message);return;}
+  currentEmergencyContacts=currentEmergencyContacts.filter(x=>x.id!==id);
+  closeEmergencyContactModal();refreshEmergencyContactsUI();showStatus('✓ Contact deleted');
 }
 
 function renderViewExtras(){
@@ -982,9 +1077,6 @@ function collectTenantPayload(){
     status:getFormValue('status')||'Active',
     occupants_count:Number(getFormValue('occupants_count')||0),
     other_occupants:getFormValue('other_occupants')||null,
-    emergency_contact_name:getFormValue('emergency_contact_name')||null,
-    emergency_contact_number:getFormValue('emergency_contact_number')||null,
-    emergency_contact_relationship:getFormValue('emergency_contact_relationship')||null,
     monthly_rent:nullableNumber(getFormValue('monthly_rent')),
     security_deposit:nullableNumber(getFormValue('security_deposit')),
     advance_payment:nullableNumber(getFormValue('advance_payment')),
@@ -1280,14 +1372,15 @@ async function quickRoomAction(tenantId){
 }
 async function exportTenantPdf(tenantId){
   const tenant=tenants.find(t=>t.id===tenantId); if(!tenant){alert('Tenant not found.');return;}
-  const [qRes,aRes,infoRes,tagsRes,secRes,transRes,attRes]=await Promise.all([
+  const [qRes,aRes,infoRes,tagsRes,secRes,transRes,attRes,contactRes]=await Promise.all([
     supabaseClient.from('tenant_questions').select('*').or(`scope.eq.all,tenant_id.eq.${tenantId}`).order('sort_order').order('created_at'),
     supabaseClient.from('tenant_answers').select('*').eq('tenant_id',tenantId),
     supabaseClient.from('tenant_other_information').select('*').eq('tenant_id',tenantId).order('created_at'),
     supabaseClient.from('tenant_tags').select('*').eq('tenant_id',tenantId).order('created_at'),
     supabaseClient.from('tenant_custom_sections').select('*').or(`scope.eq.all,tenant_id.eq.${tenantId}`).order('sort_order').order('created_at'),
     supabaseClient.from('tenant_room_transfers').select('*').eq('tenant_id',tenantId).order('transferred_at',{ascending:false}),
-    supabaseClient.from('tenant_attachments').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:false})
+    supabaseClient.from('tenant_attachments').select('*').eq('tenant_id',tenantId).order('created_at',{ascending:false}),
+    supabaseClient.from('tenant_emergency_contacts').select('*').eq('tenant_id',tenantId).order('display_order').order('created_at')
   ]);
   const {jsPDF}=window.jspdf||{}; if(!jsPDF){alert('PDF library did not load. Please check your internet connection and try again.');return;}
   const doc=new jsPDF({unit:'mm',format:'a4'});
@@ -1301,8 +1394,10 @@ async function exportTenantPdf(tenantId){
   doc.autoTable({startY:28,head:[['Basic Information','Details']],body:basic,theme:'grid',styles:{fontSize:9}});
   let y=doc.lastAutoTable.finalY+5;
   const tags=(tagsRes.data||[]).map(x=>x.tag).join(', ')||'—';
-  const rental=[['Tags',tags],['Monthly Rent',fmtMoney(tenant.monthly_rent)||'—'],['Security Deposit',fmtMoney(tenant.security_deposit)||'—'],['Advance Payment',fmtMoney(tenant.advance_payment)||'—'],['Lease Start',fmtDate(tenant.lease_start_date)||'—'],['Lease End',fmtDate(tenant.lease_end_date)||'—'],['Emergency Contact',tenant.emergency_contact_name||'—'],['Emergency Number',tenant.emergency_contact_number||'—'],['Relationship',tenant.emergency_contact_relationship||'—'],['Notes',tenant.notes||'—']];
-  doc.autoTable({startY:y,head:[['Rental / Contact','Details']],body:rental,theme:'grid',styles:{fontSize:9}}); y=doc.lastAutoTable.finalY+5;
+  const rental=[['Tags',tags],['Monthly Rent',fmtMoney(tenant.monthly_rent)||'—'],['Security Deposit',fmtMoney(tenant.security_deposit)||'—'],['Advance Payment',fmtMoney(tenant.advance_payment)||'—'],['Lease Start',fmtDate(tenant.lease_start_date)||'—'],['Lease End',fmtDate(tenant.lease_end_date)||'—'],['Notes',tenant.notes||'—']];
+  doc.autoTable({startY:y,head:[['Rental Information','Details']],body:rental,theme:'grid',styles:{fontSize:9}}); y=doc.lastAutoTable.finalY+5;
+  const contacts=(contactRes.data||[]).map(c=>[c.contact_name||'—',c.contact_number||'—',c.relationship||'—',c.is_primary?'Yes':'No',c.notes||'']);
+  if(contacts.length){doc.autoTable({startY:y,head:[['Emergency Contact','Number','Relationship','Primary','Notes']],body:contacts,theme:'grid',styles:{fontSize:8}});y=doc.lastAutoTable.finalY+5;}
   const info=(infoRes.data||[]).map(x=>[x.label,x.value||'—']); if(info.length){doc.autoTable({startY:y,head:[['Other Information','Details']],body:info,theme:'grid',styles:{fontSize:9}});y=doc.lastAutoTable.finalY+5;}
   const answers=Object.fromEntries((aRes.data||[]).map(a=>[a.question_id,a.answer_value||'—'])); const sections=secRes.data||[];
   const custom=(qRes.data||[]).map(q=>[sections.find(s=>s.id===q.section_id)?.section_name||'General',q.question,answers[q.id]||'—']);
@@ -1472,6 +1567,7 @@ async function warmTenantOfflineCache(){
     'tenant_other_information',
     'tenant_custom_sections',
     'tenant_room_transfers',
+    'tenant_emergency_contacts',
     'tenant_units'
   ];
   for(const table of tables){

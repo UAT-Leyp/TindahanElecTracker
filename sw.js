@@ -1,4 +1,4 @@
-const CACHE='424-systems-offline-v1';
+const CACHE='424-systems-offline-v2';
 const CORE=[
   './','./index.html','./electricity.html','./tenants.html','./tindahan.html',
   './offline-sync.js','./manifest.webmanifest'

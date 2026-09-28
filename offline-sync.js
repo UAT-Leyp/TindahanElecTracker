@@ -9,10 +9,11 @@ const META_STORE='meta';
 const UUID_TABLES=new Set([
   'tenant_profiles','tenant_questions','tenant_answers','tenant_attachments',
   'tenant_other_information','tenant_units','tenant_tags','tenant_custom_sections',
-  'tenant_room_transfers'
+  'tenant_room_transfers','tenant_emergency_contacts','elec_meter_reading_photos'
 ]);
 const UPSERT_KEYS={
   elec_app_settings:['setting_key'],
+  elec_month_locks:['month'],
   tenant_answers:['tenant_id','question_id']
 };
 
