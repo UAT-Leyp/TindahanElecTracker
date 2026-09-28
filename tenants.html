@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>424 Tenant Information</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#8B5CF6">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="offline-sync.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -367,7 +370,10 @@ tr:hover td{background:rgba(255,255,255,.025)}
 const SUPABASE_URL='https://carodzdpubzulokuvefl.supabase.co';
 const SUPABASE_KEY='sb_publishable_cnRdXcQn3gTlYYVlRe8heg_P6tucIyP';
 const { createClient } = window.supabase;
-const supabaseClient = createClient(SUPABASE_URL,SUPABASE_KEY);
+const realSupabaseClient = createClient(SUPABASE_URL,SUPABASE_KEY);
+const supabaseClient = window.Offline424
+  ? window.Offline424.wrapSupabase(realSupabaseClient)
+  : realSupabaseClient;
 
 let tenants=[];
 let currentTenantId=null;
@@ -412,6 +418,9 @@ function statusBadge(status){
 function showStatus(text,error=false){
   clearTimeout(saveStatusTimer);
   const el=document.getElementById('saveStatus');
+  if(!error && text && text.startsWith('✓') && window.Offline424 && !window.Offline424.isOnline()){
+    text += ' • saved locally';
+  }
   el.textContent=text||'';
   el.classList.toggle('visible',Boolean(text));
   el.classList.toggle('error',error);
@@ -1452,6 +1461,29 @@ async function deleteRoom(id){
 }
 function deleteRoomFromModal(){ if(editingRoomId) deleteRoom(editingRoomId); }
 
+async function warmTenantOfflineCache(){
+  if(!navigator.onLine) return;
+  const tables=[
+    'tenant_profiles',
+    'tenant_tags',
+    'tenant_questions',
+    'tenant_answers',
+    'tenant_attachments',
+    'tenant_other_information',
+    'tenant_custom_sections',
+    'tenant_room_transfers',
+    'tenant_units'
+  ];
+  for(const table of tables){
+    try{
+      const result=await supabaseClient.from(table).select('*');
+      if(result?.error) console.warn('Offline cache warm failed for',table,result.error);
+    }catch(error){
+      console.warn('Offline cache warm failed for',table,error);
+    }
+  }
+}
+
 async function openFromUrl(){
   const params=new URLSearchParams(location.search);
   if(params.get('new')==='1'){
@@ -1471,8 +1503,10 @@ async function openFromUrl(){
 }
 
 window.addEventListener('load',async()=>{
+  if(window.Offline424 && navigator.onLine) await window.Offline424.syncNow();
   await loadTenants();
   await loadRooms();
+  await warmTenantOfflineCache();
   await openFromUrl();
 });
 </script>

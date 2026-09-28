@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ARAGON Tenant Electricity Tracker</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#8B5CF6">
 <style>
 body{margin:0;background:#071F44;color:#fff;font-family:Arial,sans-serif;padding:15px}
 h1{color:#c4b5fd}
@@ -694,8 +696,18 @@ function showSaving(){
 
 function showSaved(){
   clearTimeout(saveStatusTimer);
-  setSaveStatus('✓ Saved');
+  const offline = window.Offline424 && !window.Offline424.isOnline();
+  setSaveStatus(offline ? '✓ Saved locally' : '✓ Saved');
   saveStatusTimer = setTimeout(() => setSaveStatus(''), 2500);
+}
+
+let elecAutoSaveTimer = null;
+function scheduleElecAutoSave(){
+  clearTimeout(elecAutoSaveTimer);
+  elecAutoSaveTimer = setTimeout(async()=>{
+    try{ await saveMonth({reload:false}); }
+    catch(error){ console.error('Auto-save failed:',error); }
+  },700);
 }
 
 function showSaveError(){
@@ -1231,7 +1243,7 @@ async function reflectForward(){
  }
 }
 
-async function saveMonth(){
+async function saveMonth(options={}){
 
  showSaving();
  const month = currentMonth();
@@ -1278,7 +1290,9 @@ const rows = [...tenantBody.rows].map((r,index) => ({
    }
  }
 
-await loadDB();
+if(options.reload !== false){
+  await loadDB();
+}
 
 console.log("DB after save:", db);
 console.log("Saved to Supabase");
@@ -1462,6 +1476,7 @@ function otherChargeChanged(input){
   if(!row) return;
   getRowOtherCharges(row);
   calc(row.querySelector('.curr'));
+  scheduleElecAutoSave();
 }
 
 function canEditCurrentTenantRow(row){
@@ -1589,10 +1604,10 @@ function addTenantRow(t){
    <input class="name" type="hidden" value="${escapeHtml(t.name||'')}">
    <a class="tenant-profile-link" href="${profileHref}" title="Open Tenant Information">${escapeHtml(displayName)}</a>
  </td>
- <td><input class="prev kwh-input" type="number" value="${t.previous||0}" oninput="calc(this)"></td>
- <td><input class="curr kwh-input" type="number" value="${t.current||''}" oninput="calc(this)"></td>
+ <td><input class="prev kwh-input" type="number" value="${t.previous||0}" oninput="calc(this);scheduleElecAutoSave()"></td>
+ <td><input class="curr kwh-input" type="number" value="${t.current||''}" oninput="calc(this);scheduleElecAutoSave()"></td>
  <td class="cons">0</td>
- <td><input class="price kwh-input" type="number" value="${t.price ?? ''}" oninput="calc(this)"></td>
+ <td><input class="price kwh-input" type="number" value="${t.price ?? ''}" oninput="calc(this);scheduleElecAutoSave()"></td>
  <td class="charges-cell">
    <input
      class="other-charge-input"
@@ -1606,7 +1621,7 @@ function addTenantRow(t){
    >
  </td>
  <td class="total">₱0.00</td>
- <td><select class="status" onchange="statusColor(this)"><option>Unpaid</option><option>Paid</option></select></td>`;
+ <td><select class="status" onchange="statusColor(this);scheduleElecAutoSave()"><option>Unpaid</option><option>Paid</option></select></td>`;
 
  tenantBody.appendChild(tr);
  tr.querySelector('.status').value=t.status||'Unpaid';
@@ -1839,15 +1854,19 @@ await saveCurrentMonthToSupabase(); }
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="offline-sync.js"></script>
 <script>
 const SUPABASE_URL='https://carodzdpubzulokuvefl.supabase.co';
 const SUPABASE_KEY='sb_publishable_cnRdXcQn3gTlYYVlRe8heg_P6tucIyP';
 
 const { createClient } = window.supabase;
-const supabaseClient = createClient(
+const realSupabaseClient = createClient(
   SUPABASE_URL,
   SUPABASE_KEY
 );
+const supabaseClient = window.Offline424
+  ? window.Offline424.wrapSupabase(realSupabaseClient)
+  : realSupabaseClient;
 
 console.log("Supabase connected:", supabaseClient);
 
@@ -1920,6 +1939,9 @@ if(
 }
 
   await loadMonth();
+  // Warm the Tenant Information nickname list too, so Add Tenant can still
+  // use the cached list while the device is offline.
+  try{ await loadTenantProfilesForElec(); }catch(error){ console.warn(error); }
 });
 </script>
 

@@ -1,0 +1,10 @@
+{
+  "name": "424 Systems",
+  "short_name": "424 Systems",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#071F44",
+  "theme_color": "#8B5CF6",
+  "description": "424 Systems Electricity Tracker, Tenant Information and POS with offline support."
+}
